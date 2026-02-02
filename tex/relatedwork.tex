@@ -1,0 +1,80 @@
+\section{Discussion}
+Based on our design and evaluation, this section further explores potential extensions for \name.
+
+\paragraphb{Why a simple Random Forest model is effective for bandwidth-to-CPU translation}
+\kw{Although prior ML-based resource managers learn policies over multiple resources and objectives (e.g., latency under multi-dimensional contention), the bandwidth-to-CPU translation targeted by \name exhibits a structured relationship that is well-suited to lightweight regression.
+For a fixed workload and traffic specification, achieved bandwidth typically increases with CPU budget but \emph{saturates} near the maximum capacity due to bottlenecks in the end-host packet-processing pipeline (e.g., softirq/vhost/virtio and application processing).
+This produces a monotone yet non-linear curve with a near-linear region at low CPU budgets and diminishing returns as the system approaches its throughput ceiling.
+Random Forest Regression (RFR) matches this structure: as an ensemble of decision trees, it captures saturation and interaction effects (e.g., message size/packet rate and hardware configuration) without extensive feature engineering, while remaining fast to train from modest datasets.}
+
+\kw{We also considered more complex learning approaches such as Multi-Layer Perceptrons (MLP) and reinforcement learning (RL).
+While MLPs are expressive, they often require larger datasets and careful tuning to generalize reliably under a tight profiling budget, which can reduce robustness in practice.
+RL is attractive for closed-loop control under highly dynamic and partially observed environments; however, for immediate bandwidth-to-CPU mapping it typically requires online exploration or iterative adjustment, which can introduce transient under-provisioning or oscillations during convergence.
+Such behavior is undesirable when bandwidth requirements must be met consistently, especially under bursty traffic or contention~\cite{delimitrou2014quasar,gao2018rlnet}.
+By exploiting the structured bandwidth--CPU relationship and training within $\sim$16 minutes per workload specification, \name achieves a favorable accuracy--overhead trade-off: it provides stable, one-shot predictions at deployment time without exploration-driven fluctuations.
+As future work, \name could be combined with lightweight online calibration or safe adaptation mechanisms to further improve robustness under long-term workload drift.}
+
+
+\paragraphb{Support for container-based microservice architectures}
+\kw{In container-based environments, microservices introduce additional challenges due to their distributed nature: multiple containers collectively form a single service, each container may have distinct resource demands, and containers may be placed across different VMs.
+Previous studies primarily focus on container-level resource allocation to satisfy latency objectives~\cite{zhang2021sinan,qiu2020firm,wang2024autothrottle}, whereas \name targets VM-level CPU provisioning to satisfy network bandwidth requirements.
+These approaches are complementary in modern clouds where microservices often run atop VMs: \name can ensure that the underlying VM provides sufficient CPU capacity for bandwidth delivery, while container-level controllers can further allocate CPU among microservices to meet latency requirements.
+A promising direction is a unified framework that combines VM-level bandwidth-to-CPU translation with container-level latency-oriented allocation, enabling consistent performance isolation and end-to-end QoS for complex microservice deployments.}
+
+
+
+\paragraphb{Support for different virtualization architectures}
+Although this paper focuses on a representative software-based virtualization solution (KVM), the \name framework is also applicable to other architectures, such as paravirtualization solutions like Xen~\cite{barham2003xen} and hardware-assisted solutions like Single Root I/O Virtualization (SR-IOV). In Xen, Dom0 (the control domain) handles network processing for guest VMs and employs dedicated network threads for individual VMs. Therefore, \name’s Model-H can be directly applied to allocate CPU resources for these Dom0 network threads, ensuring accurate and efficient resource provisioning.
+With SR-IOV, \name’s architecture becomes even simpler because VMs have direct access to virtual network functions through hardware. This eliminates the need for Model-H, allowing \name to train only Model-G and simplifying the optimization process by avoiding the model concatenation step described in \S\ref{subsec:optimization}.
+
+%\paragraphb{Support for container-based microservice architectures}
+%In container-based environments, microservices introduce additional challenges due to their distributed nature. In a microservice architecture, multiple containers collectively form a single service. Each container may have different resource requirements and could be distributed across VMs. Previous studies focus on container-level resource allocation to meet latency SLOs~\cite{zhang2021sinan,qiu2020firm,wang2024autothrottle}, while our work addresses VM-level allocation for network bandwidth requirements. Thus, a promising future direction would be to integrate these approaches into a unified framework to more effectively support diverse cloud workloads.
+
+\paragraphb{Resource allocation for different computing resources}
+In our evaluation, we assume that VMs have sufficient memory (\eg, $4$GB) to achieve target network bandwidth based on the CPU allocation provided by the \name manager. 
+However, VM workload performance can degrade if the VM has insufficient memory~\cite{chen2019parties}. We believe that the \name manager can be extended to incorporate other computing resources, such as memory, as additional input features for Model-G and Model-H. For example, when the \name collector executes the target workload on a test VM to collect training data, it can also measure the VM's memory usage using tools like {\tt vmstat}. The \name manager can then train Model-G and Model-H with this extended dataset, including memory usage as a feature. Subsequently, the memory allocation predicted by the models can be enforced using the Linux {\tt cgroup} subsystem, ensuring that the target VM has proper memory to achieve its configured requirements.
+
+\paragraphb{Handling diverse network traffic patterns}
+This paper evaluates \name with three different workloads. Here, we would like to discuss how \name can handle workloads with other traffic patterns. For example, when a workload has a range of message sizes, \name selects parameters representing the worst case in terms of CPU demand for the workload. Specifically, \name can use the smallest possible message size, as smaller messages generate more packets and incur higher network processing overhead~\cite{han2012megapipe}. Similarly, regarding traffic patterns, \name can adopt the most bursty pattern that yields peak load during data collection. Thus, \name can adapt itself for the worst case to handle a range of workloads.
+
+However, we find that this behavior of \name often results in over-provisioning of CPU, particularly under non-peak load conditions. Over-provisioning can waste valuable CPU resources. But note that \name is designed to exploit the work-conserving property of the Linux CFS scheduler. When a workload does not fully utilize the allocated CPU, \name lets CFS automatically redistribute the unused CPU cycles to other VMs. As demonstrated in Figure~\ref{fig:dynamic_web}, \name performs well under such dynamic-load scenarios with varying traffic loads.
+Also, in our evaluation, the VMs are tested under a single stream of network traffic. It is because we want \name to be evaluated without other interferences. Nevertheless, \name is capable of handling multiple traffic streams. When there are multiple streams of requests, \name can allocate additional Host processes for the multiple streams. Since network traffic in KVM is processed by the Host, \name can map each incoming stream to a distinct Host process. This mapping enables CPU allocation to be managed per stream.
+
+\newcommand{\lt}{<}
+\paragraphb{Overhead for data collection}
+\name utilizes two test VMs for data collection: one as the sender and the other as the receiver for a workload.
+A test VM is allocated with a Host process, and the Host process handles the network processing via \texttt{virtio} driver, as described in Section~\ref{sec:motivation}. Thus, the overhead of training data collection comes from two test VMs, including two Host processes and their resource usage.
+Our experiments show that, for the Netperf workload with a single vCPU assigned, the sender test VM consumes up to 180\% of CPU resources. Note that the receiver VM utilizes much less CPU(\lt $100$\%). \kw{Mention FLASH HERE}
+%This measurement captures the maximum observed overhead attributable to the data collection process.
+
+\section{Related Work}
+\vspace{-0.05in}
+%Previous studies on achieving network bandwidth requirements in virtualized environments can be categorized into network scheduling, vCPU prioritization, fine-grained CPU allocation, and ML approaches.
+%\noindent\textbf{Summary of differences.}
+\kw{Prior work either (i) shapes network egress without translating bandwidth intent into CPU budgets,
+(ii) biases scheduling toward I/O-oriented vCPUs without computing the CPU needed for a specific bandwidth target,
+(iii) reallocates whole cores or iteratively tunes quotas for latency objectives, or
+(iv) applies ML for multi-resource SLO control mainly in native/container settings.
+In contrast, \name targets \emph{VM-level bandwidth requirements} and introduces a lightweight, host--guest-aware model that directly predicts the host CPU quota needed to sustain a given bandwidth target.}
+
+
+\paragraphb{Network scheduling}~\cite{jeyakumar2013eyeq,jang2015silo, dmvl, elasticswitch} proposes to control the network bandwidth of VMs in hypervisor by offering an independent packet queue to each VM and managing the transmission rate of the packet queue. This enables VMs to achieve different network bandwidths independent of other VMs.
+However, VMs can fail to achieve network bandwidth without the right CPU budgets because studies on network scheduling assume that CPU allocation is always sufficient.
+As network scheduling techniques only allocate network bandwidth and do not properly intervene in CPU allocation, VMs cannot meet bandwidth requirements when CPU becomes the bottleneck.
+
+\paragraphb{vCPU prioritization}~\cite{xu2013vturbo,suo2017preserving,cheng2012vbalance,ahn2018accelerating,jia2020vsmt,jia2018effectively} suggests improving vCPU scheduling to improve the network performance of VMs. They point out that the root cause of the low network bandwidth is scheduling latency due to CPU sharing between VMs on a physical machine. In particular, when VMs run different types of workloads, such as CPU-bound and I/O-bound, the VMs running I/O-bound workloads experience significant scheduling delays and suffer from performance degradation.
+To resolve the scheduling latency issue, several studies~\cite{xu2013vturbo,ahn2018accelerating} propose to decrease the scheduling period in a hypervisor.
+In addition, other studies~\cite{suo2017preserving,jia2020vsmt,jia2018effectively} suggest preferentially scheduling the vCPUs of VMs running I/O-bound workloads.
+%Although studies on vCPU prioritization are mostly effective in improving performance, they have difficulty achieving network bandwidth in a fine-grained manner, as we observe in \S\ref{subsec:existing}.
+\kw{These techniques improve scheduling responsiveness for I/O-oriented VMs, but they do not compute the CPU budget required to sustain a given bandwidth target under diverse traffic patterns and contention levels.
+\name instead provides a direct bandwidth-to-CPU translation and enforces the predicted host CPU quota, enabling fine-grained bandwidth provisioning beyond weight-based prioritization.}
+
+\paragraphb{Fine-grained CPU allocation}
+Optimizing system resource allocation is a well-known challenge~\cite{bird2011pacora,colmenares2013tessellation}. 
+Recent studies have explored fine-grained CPU allocation to meet user-specified SLOs. For instance, Shenango~\cite{shenango} and Caladan~\cite{fried2020caladan} achieve target latency by reallocating CPUs to latency-sensitive applications at microsecond granularity.
+However, these systems allocate entire CPU cores rather than fractional CPU utilization to enable fast CPU reallocations. This often allocates more CPU time than is required for a specific bandwidth requirement.
+In~\cite{autothrottle23}, the authors propose a mechanism that iteratively adjusts CPU quotas until SLO-configured applications meet their bandwidth requirements. Although this approach enables fine-grained CPU allocations, it often requires numerous iterations to identify the appropriate CPU quota, resulting in prolonged allocation times.
+
+\paragraphb{Machine learning approaches}
+Recently, many studies have adopted ML techniques to develop innovative solutions for performance monitoring~\cite{gan2019seer,gan2021sage}, task scheduling~\cite{zhang2021sinan,mao2016resource}, and resource allocation~\cite{qiu2020firm, qiu2023aware,qiu2022simppo,wang2022deepscaling}. For instance, FIRM~\cite{qiu2020firm} introduces a low-level controller that partitions computing resources by utilizing Linux functionalities, such as {\tt tc}, and predicts the required resources to meet SLOs using ML and DL models. While these studies, demonstrate the effectiveness of their proposed techniques in mitigating SLO violations, they may not be directly applicable to the virtualized environments focused on in this paper. This limitation arises because these studies primarily address native environments or container-based systems, without considering the unique CPU usage dynamics of both the guest and host in virtualized settings, \kw{where packet processing spans guest vCPUs and host-side vhost/qemu/softirq paths.}
+

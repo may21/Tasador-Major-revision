@@ -1,0 +1,133 @@
+%\section{Background and motivation}
+\vspace{-0.1in}
+\section{Understanding Network Bandwidth to CPU Translations}
+%\section{Understanding CPU Translations}
+\label{sec:motivation}
+
+This section presents a deep dive into why the network bandwidth to CPU translation is crucial for achieving the target bandwidth. We carry out experiments with two existing schemes---network scheduling and vCPU prioritization---and measure how inaccurate they are.
+We first describe our setup (\S\ref{subsec:config}), and then discuss several results and insights of our benchmarks with the existing schemes (\S\ref{subsec:existing}). We then extend our insights to other workloads and hardware configurations (\S\ref{subsec:different}).
+\vspace{-0.2in}
+\subsection{Measurement Setup}
+\label{subsec:config}
+We use a testbed with two physical machines, each with a $10$Gbps NIC, connected to each other via a $10$Gbps network switch.
+Also, we use KVM~\cite{kivity2007kvm}, a popular hypervisor integrated into the Linux kernel, and create a single VM running on Linux kernel 5.4, allocating one vCPU to the VM.
+This section focuses on a single-core performance to better understand per-core network bandwidth to CPU translation (see \S\ref{sec:eval} for multicore evaluation). To this end, we pin the VM and the Host processes\footnote{The Host process represents a hypervisor thread in KVM that handles I/O device emulation.} on a single physical core.
+Details of system configurations are described in \S\ref{sec:eval}.
+
+%\renewcommand{\arraystretch}{1.1}
+\begin{table}
+\footnotesize
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tabular}{|c|c|c|} \hline
+~~Configuration~~  & CPU (Intel Xeon)  & ~~~Memory~~~  \\ \hline\hline
+Config1			& E5-2650v3@2.6GHz with $10$ cores & $256$GB \\ \hline
+Config2			& E5-2650v2@2.6GHz with $8$ cores & $64$GB \\ \hline
+Config3			& Silver 4310@2.1GHz with $24$ cores & $128$GB \\ \hline
+\end{tabular}}
+\caption{Hardware configurations.}
+\label{table:configs}
+\vspace{-0.1in}
+\end{table}
+ 
+For the network scheduling scheme, we use Linux traffic control ({\tt tc})~\cite{hubert2002linux}, a widely used network scheduling technique in recent studies~\cite{jeyakumar2013eyeq,qiu2020firm,autothrottle23}.
+The vCPU prioritization scheme prioritizes the vCPU of the SLO-configured VMs (\ie, those with bandwidth requirements) over non-SLO VMs~\cite{jia2020vsmt,suo2017preserving,jia2018effectively}. Unfortunately, to the best of our knowledge, there is no publicly available implementation for testing this approach, so in our paper, we implement the vCPU prioritization by varying the ``vCPU share'' of the VM~\cite{bouron2018battle}, where higher vCPU share indicates a higher priority in CPU scheduling.
+Here, we define four prioritization levels: {\tt default}, {\tt prio1}, {\tt prio2}, and {\tt prio3}, corresponding to vCPU share values of $1024$, $2048$, $4096$, and $8192$, respectively.
+We then measure the network bandwidth and CPU utilization of the VM (Guest) and hypervisor (Host) for both schemes. To achieve this, we employ Netperf benchmark, which continuously transmits a size of messages. 
+Lastly, to draw comparisons across various workloads and hardware configurations, we use Webserver and Memcached workloads, along with the hardware configurations listed in Table~\ref{table:configs}; unless
+otherwise stated, {\tt Config1} is used as the default configuration.
+\vspace{-0.2in}
+\begin{figure}
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/tc_64_fin.pdf}
+    \label{fig:network_perf1}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/tc_1024_fin.pdf}
+    \label{fig:network_perf2}
+  }
+%\vspace{-0.1in}
+\caption{Network scheduling scheme ({\tt tc}) requires sufficient CPU resources for the Guest to meet the network bandwidth requirement. %See \S\ref{subsec:existing} for more details.
+}
+\label{fig:network_perf}
+\vspace{-0.2in}
+\end{figure}
+%\vspace{-0.1in}
+\subsection{Results of Two Schemes: Imperfect Translations}
+\label{subsec:existing}
+We begin our analysis by evaluating Netperf benchmarks with varying message sizes.
+
+\paragraphb{Network scheduling}
+In Figure~\ref{fig:network_perf}, we vary the target bandwidth (SLO) from $100$Mbps to $400$Mbps and apply rate-limiting to the VM using {\tt tc}.
+While {\tt tc} is generally effective at controlling the transmission rate through packet scheduling, Figure~\ref{fig:network_perf}(a) reveals its inability to meet even $200$Mbps SLO when the message size is small ($64$B). 
+This limitation stems primarily from the Linux CPU scheduler, Completely Fair Scheduling (CFS), which allocates a fair share of CPU time to both the Guest and the Host processes, %(see the green and blue bars in Figure~\ref{fig:network_perf}(a)),
+However, the Guest process requires more CPU time than its fair share in order to generate more network traffic to meet the bandwidth requirement, a factor that CFS is unaware of. As a result, its network bandwidth reaches only ${\sim}150$Mbps under the given CPU allocation, even when the bandwidth requirement is higher.
+Using a larger message size (\eg, $1024$B) reduces the per-message processing overhead~\cite{cai2021} within the Guest, saving CPU cycles.
+This enables the Guest to meet network bandwidth requirements of up to $200$Mbps, as shown in Figure~\ref{fig:network_perf}(b). 
+However, it still fails to achieve higher bandwidth requirements when the CPU time allocated by CFS becomes the bottleneck again.
+The results mean imperfect translations due to SLO-unaware CPU scheduling.
+
+\paragraphb{vCPU prioritization}
+%To investigate whether allocating more CPU time to the Guest can improve network bandwidth, we introduce vCPU prioritization, allowing more CPU resources to be allocated to the Guest beyond its fair share. 
+\kw{We implement “vCPU prioritization” as a cgroup weight adjustment by increasing \tt{cpu.shares} for the cgroup that contains the VM’s vCPU threads. In Linux CPU scheduling\footnote{This includes Linux’s CFS in earlier kernels and the EEVDF-based scheduler in newer kernels.}, CPU time is apportioned across runnable cgroups roughly in proportion to their weights; therefore, a higher \tt{cpu.shares} increases the VM’s relative CPU share under contention. However, it does not guarantee additional CPU time; it only increases the VM’s relative scheduling share when the vCPU threads are runnable and the host is contended.}
+Figure~\ref{fig:vcpu_perf}(a) shows that the network bandwidth can increase up to $454$Mbps with the {\tt prio3} priority when the message size is $64$B.
+The problem is that vCPU prioritization often leads to CPU over-provisioning due to its coarse-grained CPU allocation.
+For instance, in Figure~\ref{fig:vcpu_perf}(a), if the network bandwidth requirement is $200$Mbps, {\tt prio2} would need to be assigned since {\tt prio1} achieves only $150$Mbps. However, {\tt prio2} can achieve $306$Mbps, exceeding the bandwidth requirement by $106$Mbps unnecessarily and thus wasting CPU resources.
+
+%\vspace{-0.in}
+\begin{figure}
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/share_64_fin.pdf}
+    \label{fig:vcpu_perf1}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/share_1024_fin.pdf}
+    \label{fig:vcpu_perf2}
+  }
+ % \vspace{-0.1in}
+  \caption{vCPU prioritization scheme suffers from inaccurate bandwidth provisioning because of coarse-grained CPU allocations to the Guest. 
+  %See \S\ref{subsec:existing} for more details.
+  }
+  \label{fig:vcpu_perf}
+  \vspace{-0.2in}
+\end{figure}
+
+The situation becomes even worse with larger message sizes. In Figure~\ref{fig:vcpu_perf}(b), the network bandwidth surges from $250$Mbps to $2.86$Gbps with a message size of $1024$B when the priority is increased from {\tt default} to {\tt prio1}.
+This implies that there can be significant over-provisioning of network resources---\eg, if the bandwidth requirement is set slightly above $250$Mbps, which cannot be achieved with the {\tt default} priority, {\tt prio1} would need to be selected, unnecessarily consuming ${\sim}2.61$Gbps of network bandwidth that could have been allocated to other VMs. The results mean imperfect translations due to coarse-grained CPU allocation.
+
+We note that one may consider more precise, finer-grained CPU allocations to enable more accurate rate-limiting. However, this approach involves a trade-off between allocation precision and adjustment time. As demonstrated in \cite{autothrottle23}, CPU allocation can be periodically fine-tuned until the bandwidth requirement is met, but often requires longer adjustment periods. For instance, in the scenario shown in Figure~\ref{fig:vcpu_perf}(a), if the requirement is set to $400$Mbps with the {\tt default} priority, such a fine-tuning scheme could take over $50$ seconds to achieve an SLO-satisfied CPU allocation---by which time most data transfers would likely have already completed~\cite{dctcp}, resulting in a failure to meet the bandwidth requirement.
+
+\vspace{-0.2in}
+\subsection{Impact of Different Configurations}
+\label{subsec:different}
+
+Now, consider a case where we maintain a long-term record of network bandwidth to CPU mappings for a specific network application. While this approach might enable accurate network bandwidth to CPU translations for that particular application and server configuration, it may still fail to generalize effectively across different workloads or hardware configurations. 
+Figure~\ref{fig:comparison} provides evidence of this limitation, showing that bandwidth to CPU translation outcomes can vary significantly across applications and configurations, even when applying the same CPU allocation scheme. 
+Specifically, Figure~\ref{fig:comparison}(a) compares the normalized bandwidth of Webserver and Memcached against Netperf, with all applications running on a data size of $64$B using the vCPU prioritization scheme described in \S\ref{subsec:existing}.
+Notably, Webserver and Memcached show bandwidth differences ranging from $1.2\times$ to $2.6\times$ relative to Netperf.
+
+%\vspace{-0.2in}
+\begin{figure}
+\centering
+  \subfloat[Different workloads.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_workload_atc.pdf}
+    \label{fig:comparison_workloads}
+  }
+  \subfloat[Different hardware.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_server_atc.pdf}
+    \label{fig:comparison_servers}
+  }
+%  \vspace{-0.1in}
+\caption{The outcomes of bandwidth to CPU translation can vary with (a) different workloads under the same hardware configuration ({\tt Config1}) and (b) different hardware configurations but the same application (Netperf). 
+\small{(Normalized against (a) Netperf and (b) {\tt Config1}).}
+%See \S\ref{subsec:different} for more details.
+}
+\label{fig:comparison}
+\vspace{-0.2in}
+\end{figure}
+
+We also test three different hardware configurations listed in Table~\ref{table:configs} using the same application, Netperf.
+In Figure~\ref{fig:comparison}(b), the results for {\tt Config2} and {\tt Config3} are normalized against {\tt Config1} (the default configuration), revealing bandwidth variations between $0.4\times$ and $3.5\times$. We observe that the lower memory size in {\tt Config2} limits the increase in network bandwidth, even with higher priority settings (\eg, {\tt prio2} and {\tt prio3} in Figure~\ref{fig:comparison}(b)), resulting in lower bandwidth compared to the default configuration.
+These findings indicate that no single universal translation can accommodate all workloads and hardware configurations.

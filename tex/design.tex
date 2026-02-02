@@ -1,0 +1,232 @@
+\begin{figure}
+  \centering
+  \includegraphics[width=0.45\textwidth]{figure/iott_final.pdf}
+ % \vspace{-0.1in}
+\caption{ \name architecture.
+%See \S\ref{subsec:framework} for more details.
+}
+\label{fig:arch_iott}
+\vspace{-0.2in}
+\end{figure}
+
+
+\section{\name Design}
+\label{sec:design}
+
+This section presents \name, a general framework designed for translating network bandwidth to CPU resource allocation in virtualized environments. 
+\cut{At its core, \name learns the relationship between CPU allocation and network bandwidth for specific workloads. To achieve this, we dynamically collect training data by measuring network bandwidth under varying CPU allocations and use this dataset to train our model. The resulting model can then predict the CPU allocation required to meet the specified network bandwidth.
+A key challenge in this process is how to vary CPU allocations for both Host and Guest processes simultaneously during data collection. Figure~\ref{fig:feasibility} reveals that Guest CPU utilization strongly correlates with Host CPU utilization because the Host handles network packet processing for the Guest's applications. In other words, for a specific workload, fixing the Host's CPU allocation effectively determines the Guest's CPU utilization. Leveraging this observation, we simplify the data collection process by varying only the Host CPU allocation while measuring the corresponding Guest CPU utilization as well as network bandwidth. This allows our ML model to predict the required CPU allocations for both Host and Guest for a target network bandwidth, significantly reducing the data collection time.}
+In the following subsections, we outline the design of the \name framework (\S\ref{subsec:framework}) and provide an in-depth exploration of our network bandwidth to CPU translation model (\S\ref{subsec:model}). 
+We then delve into how \name predicts the appropriate CPU requirement (\S\ref{subsec:optimization}).%Additionally, we delve 
+
+\subsection{Design overview}
+
+\subsection{\name Framework}
+\label{subsec:framework}
+As a general framework, \name consists of two core components: the \name manager and the \name collector. The \name manager executes the entire workflow, from receiving user-defined network bandwidth requirements to enforcing CPU allocations predicted by our ML model.
+The \name collector is responsible for generating the training dataset, derived from measurements of new workloads. And then, the \name manager takes this dataset to train our ML model.
+The detailed workflow is outlined as follows (also see Figure~\ref{fig:arch_iott}):
+
+
+
+
+\paragraphb{(1) Training data collection}
+
+First, the \name manager processes user requests containing network bandwidth requirement, target workload, and message size. If a pre-trained ML model for the target workload is unavailable, the \name manager activates the \name collector to gather the required training dataset.
+The collector creates a test VM, executes the target workload, and measures the network bandwidth and the Guest CPU utilization while varying Host CPU allocation for the workload. Each measurement runs for $10$ seconds and is repeated three times. 
+This process allows \name to learn the CPU usage characteristics for achieving the target bandwidth.
+The granularity of Host CPU allocation during data collection will be explained in the following subsections. 
+Once the dataset is generated, it is returned to the \name manager.
+We note that the \name manager retains all collected datasets for future use. 
+Consequently, if a future user request involves the same target workload, the \name manager skips the data collection phase and proceeds directly to subsequent steps.
+
+\paragraphb{(2) Model training and CPU prediction}
+Next, the \name manager trains two ML models, Model-G and Model-H, for the Guest and Host, respectively, using the dataset collected by the \name collector. 
+These models use Random Forest Regression that shows superior accuracy among representative regression models, as further detailed in \S\ref{subsec:model}.
+Model-G predicts the CPU usage of the VM, while Model-H predicts the CPU usage on the Host. The model architecture will be described in the following subsections. 
+We note that our model training is notably fast compared to other ML training schemes, which often require several hours to attain the reasonable accuracy of their models~\cite{park2021graf,gan2019seer, gan2021sage}. In contrast, \name can train Model-G and Model-H in only $37$ and $36$ seconds, respectively. %within only ${\sim}30$ seconds each. 
+Furthermore, akin to the dataset, the \name manager maintains the trained Model-G and Model-H for workloads, enabling the re-use of pre-trained models for future requests. This significantly improves the efficiency of \name by eliminating redundant processes.
+Once Model-G and Model-H are trained, the \name manager uses these models for CPU prediction. 
+Here, we adopt a concatenated prediction method, which uses the Guest CPU prediction result as an input to improve the accuracy of Host CPU prediction (further described in \S\ref{subsec:optimization}).
+
+
+\cut{
+\begin{figure*}
+\centering
+  \subfloat[Linear regression (LR).] {
+    \includegraphics[width=0.32\textwidth]{figure/lr_fgcs.pdf}
+    \label{fig:lr}
+  }
+  \subfloat[Support vector regression (SVR).] {
+    \includegraphics[width=0.32\textwidth]{figure/svr_fgcs.pdf}
+    \label{fig:svr}
+  }
+  \subfloat[Random forest regression (RFR).] {
+    \includegraphics[width=0.32\textwidth]{figure/rfr_fgcs.pdf}
+    \label{fig:rfr}
+  }
+  \caption{While RFR shows the highest predictive accuracy among the three models (\cref{table:model}), it still tends to overestimate or underestimate CPU utilization like the other two models, necessitating further optimization.
+  See \S\ref{subsec:model} for more details.}
+  \label{fig:model_perf} 
+\end{figure*}
+
+\begin{table}
+\centering\resizebox{0.8\linewidth}{!}{
+\begin{tabular}{@{}crr@{}}
+\toprule
+  & \multicolumn{1}{c}{RMSLE} & \multicolumn{1}{c}{RMSE} \\ \midrule
+ Linear Regression  &  $0.244$                     &  ${11222.513}$                \\
+Support Vector Regression &  $0.190$                     &  ${9355.520}$                 \\
+Random Forest Regression &  $0.159$                     &  ${8087.562}$                 \\ \bottomrule
+\end{tabular}
+}
+\caption{Random Forest Regression achieves the lowest RMSLE and RMSE among the three models, showcasing the highest predictive accuracy. See \S\ref{subsec:model} for more details.}
+\label{table:model}
+\end{table}
+
+To further illustrate the evaluation, Figure~\ref{fig:model_perf} compares the actual CPU utilization (x-axis) with the predicted CPU utilization (y-axis)\footnote{In the figure, we present the Host CPU utilization results, as the Guest CPU utilization shows a similar trend.}. Here, the actual utilization refers to the CPU required to achieve the target network bandwidth. In Figure~\ref{fig:model_perf}(a), we observe that predictions from LR consistently overestimate CPU requirements, leading to over-allocation. Over-allocation causes both the Guest and Host to consume more CPU time than needed, resulting in resource inefficiencies. Furthermore, when actual CPU utilization exceeds $75$\%, LR underestimates it, causing under-allocation that leads to SLO violations.
+Figure~\ref{fig:model_perf}(b) reveals that SVR yields outcomes similar to those of LR. Although SVR achieves slightly better accuracy in terms of RMSLE and RMSE compared to LR (as shown in \cref{table:model}), it still fails to effectively resolve the allocation inaccuracies.
+Lastly, Figure~\ref{fig:model_perf}(c) shows that RFR delivers more accurate predictions, particularly when actual CPU utilization is below $50$\%, outperforming LR and SVR. This is supported by its lowest RMSLE ($0.159$) and RMSE ($8087.562$) values, as shown in \cref{table:model}.
+}
+
+\paragraphb{(3) CPU allocation enforcement}
+Finally, the \name manager enforces the CPU allocations, predicted by our concatenated method that exploits both Model-G and Model-H, onto the target VM running the target workload.
+\name ensures that appropriate CPU resources are allocated to the Host, enabling the SLO-configured VM to achieve optimal CPU utilization for the target bandwidth while minimizing CPU waste.
+Specifically, \name uses Linux {\tt cgroup}~\cite{cgroup} to enforce the predicted CPU allocations effectively, rather than modifying Linux CPU scheduling directly.
+%A detailed explanation of the CPU allocation enforcement mechanism is provided in \S\ref{sec:implementation}.
+
+
+\subsection{CPU Translation Model}
+\label{subsec:model}
+We now introduce the network bandwidth to CPU translation model, which predicts the CPU resources required to meet a specified bandwidth requirement. 
+The translation model is developed to accurately capture the relationship between CPU allocation and the resulting network bandwidth.
+First, we preprocess the raw data collected by the \name collector, which includes network bandwidth, the number of packets per second (pps), and CPU utilization of the VM (\ie, Guest CPU). These values are collected while varying the Host CPU allocation from $10$\% to $100$\%\footnote{Here, a $100$\% CPU allocation represents the full utilization of a single CPU core.} in increments of $10$\%.
+Our preprocessing includes normalization, where min-max scaling adjusts all values to fall between 0 and 1, improving model accuracy. Data is randomly split into training and evaluation sets at a 4:1 ratio. Bandwidth values are converted to Mbps for finer granularity, as Gbps units display only two decimal places.
+
+\kw{Next, we identify an effective regression model for capturing the relationship between CPU allocation and achievable network bandwidth. In virtualized endpoints, this relationship is typically monotone but not strictly linear: bandwidth increases with CPU budget in the low-to-mid regime and saturates near the maximum capacity due to bottlenecks in the host–guest packet-processing pipeline. Therefore, we prioritize models that (i) fit both near-linear trends and saturation effects, (ii) are robust to noise in shared environments, and (iii) incur low training overhead to enable fast retraining. To this end, we evaluate three representative supervised models: Linear Regression (LR), Support Vector Regression (SVR), and Random Forest Regression (RFR). LR serves as a simple baseline for the near-linear regime; SVR provides robustness to noise and outliers; and RFR captures non-linearities and feature interactions arising from message-size effects and hardware configurations. These models are computationally lightweight, allowing \name to retrain quickly as workload specifications change. During evaluation, we tune hyperparameters using random grid search with 5-fold cross-validation, averaging prediction error across folds to obtain a robust validation score.}
+
+\cut{Next, we identify the most effective ML model for capturing the relationship between CPU allocation and network bandwidth. 
+To this end, we evaluate three representative supervised ML models for regression: Linear Regression (LR), Support Vector Regression (SVR), and Random Forest Regression (RFR).
+During the evaluation of these three models, we perform hyperparameter tuning using the random grid search technique. For each combination of hyperparameters, we apply $5$-fold cross-validation on the training dataset. Specifically, the dataset is divided into five subsets. For each fold, the model is trained on four subsets and validated on the remaining one. The prediction errors across all folds are averaged to calculate the final validation score, providing a robust estimate of the model's performance.}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}
+\footnotesize
+\centering
+\begin{tabular}{|c|c|c|} \hline
+Model   & ~~RMSLE~~  & RMSE  \\ \hline\hline
+Linear Regression			    & $0.244$ & ${11222.513}$ \\ \hline
+Support Vector Regression   	& $0.190$ & ${9355.520}$ \\ \hline
+~~Random Forest Regression~~	& $0.159$ & ${8087.562}$ \\ \hline
+\end{tabular}
+\vspace{0.1in}
+\caption{Random Forest Regression achieves the lowest RMSLE and RMSE among the three models, showcasing the highest predictive accuracy. 
+%See \S\ref{subsec:model} for more details.
+}
+\label{table:model}
+\vspace{-0.2in}
+\end{table}
+
+
+In evaluating the prediction error, we use two metrics: Root Mean Square Error (RMSE) and Root Mean Square Log Error (RMSLE). RMSE measures predictive accuracy by summarizing the magnitudes of prediction errors into a single metric, reflecting how closely the data points align with the line of best fit. RMSLE enhances the model's robustness against outliers, ensuring that the model remains effective even when there are significant differences between predicted and actual values, thereby reducing the risk of underestimating key data points.
+Table~\ref{table:model} presents the RMSLE and RMSE results for three models trained on the same dataset.
+The outcomes reveal that RFR achieves the lowest RMSLE and RMSE values, indicating higher accuracy compared to the other two models.
+The reason that RFR outperforms other models is that increasing Host CPU allocation no longer improves network bandwidth once Guest CPU utilization becomes saturated. This nonlinear behavior limits the accuracy of linear models, whereas our RFR effectively captures this nonlinearity, resulting in better prediction performance.
+Therefore, we choose RFR as the core model for constructing both Model-G and Model-H.
+
+
+\subsection{Model Optimization}
+\label{subsec:optimization}
+This subsection conducts two optimizations for our RFR model: finer-grained data collection and concatenated CPU prediction.
+
+\paragraphb{Finer-grained data collection}
+We previously used a $10$\% granularity for varying Host CPU allocation during data collection. To further enhance the model accuracy, finer-grained data collection (\eg, using $1$\% CPU granularity for data collection) could be considered. However, this approach involves a trade-off between collection time and model accuracy. Using finer CPU granularity will increase the data collection time due to the larger number of samples that must be measured. For instance, setting the granularity to $1$\% would increase the data collection time to $50$ minutes, compared to only $4$--$5$ minutes with $10$\% granularity.
+
+
+To determine an optimal granularity for data collection, we conduct a sensitivity analysis.
+Figure \ref{fig:granularity} illustrates how training data granularity impacts the CPU translation accuracy of \name. The results show that as data granularity increases from $1$\% to $10$\%, the range of normalized bandwidth (\ie, measured bandwidth relative to the target bandwidth based on CPU predictions) widens, indicating reduced prediction accuracy. For instance, with a single vCPU, the standard deviation of normalized bandwidth (not shown in the figure) increases from $0.03$ to $0.08$ as granularity increases from $1$\% to $10$\%. However, increasing granularity from $1$\% to $5$\% results in no significant difference, with the maximum observed standard deviation of $0.02$ (for $2$ vCPUs).
+Additionally, using $5$\% granularity reduces the data collection time to only $14$ minutes, a significant improvement compared to the $50$ minutes required for $1$\% granularity. Based on these findings, we adopt $5$\% granularity as the default, as it strikes a balance between reduced data collection time and maintaining high accuracy.
+Furthermore, we use $1$\% granularity for CPU allocations below $10$\%, as network bandwidth varies more sensitively when CPU utilization is under $10$\%.
+Overall, adopting finer granularity (\ie, $1$\% and $5$\%) for data collection improves RMSE by up to $12$\%.
+
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.34\textwidth]{figure/granularity.pdf}
+%  \vspace{-0.1in}
+\caption{The bandwidth based on the CPU predictions is normalized against the target bandwidth. Finer-grained data collection improves the prediction accuracy.
+%See \S\ref{subsec:optimization} for more details.
+}
+\label{fig:granularity}
+\vspace{-0.2in}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.3\textwidth]{figure/feasibility_tsc.pdf}
+%  \vspace{-0.1in}
+\caption{Guest CPU utilization is directly affected by Host CPU allocation across different message sizes when running network applications in a virtualized environment. 
+%See \S\ref{sec:design} for more details.
+}
+\label{fig:feasibility}
+\vspace{-0.2in}
+\end{figure}
+
+\begin{figure*}
+\centering
+  \subfloat[Separate.] {
+    \includegraphics[width=0.13\textwidth]{figure/single_arch_new.pdf}
+    \label{fig:single_arch}
+  }\hspace{0.2in}
+  \subfloat[Concatenated.] {
+    \includegraphics[width=0.12\textwidth]{figure/concatenated_arch_new.pdf}
+    \label{fig:concatenated_arch}
+  }\hspace{0.2in}
+  \subfloat[Separate CPU prediction.] {
+    \includegraphics[width=0.25\textwidth]{figure/single_new.pdf}
+    \label{fig:single_perf}
+  }\hspace{0.2in}
+  \subfloat[Concatenated CPU prediction.] {
+    \includegraphics[width=0.25\textwidth]{figure/concatenated_new.pdf}
+    \label{fig:concatenated_perf}
+  }  
+%  \vspace{-0.1in}
+  \caption{{\bf \name model optimization.} Our concatenated prediction method uses the predicted Guest CPU utilization as input for the Host CPU prediction (y-axis in (c) and (d)). 
+  %This significantly improves the prediction accuracy compared to the separate method.
+  %See \S\ref{subsec:optimization} for more details.
+  }
+  \label{fig:concatenated}  
+  \vspace{-0.2in}
+\end{figure*}
+
+\paragraphb{Concatenated CPU prediction}
+Figure~\ref{fig:concatenated}(a) illustrates the ``separate'' CPU prediction method (using independent models G and H) previously evaluated in \S\ref{subsec:model}. This method directly predicts the CPU utilization for the Guest and Host based on the network bandwidth requirement and message size. However, it still suffers from over- and under-allocation, as shown in Figure~\ref{fig:concatenated}(c), which compares the target CPU utilization (x-axis) to the predicted Host CPU utilization (y-axis). Here, the target utilization refers to the CPU required to meet the target network bandwidth.
+
+
+To account for the correlation between the Guest and Host (illustrated in Figure~\ref{fig:feasibility}), we devise a new method called the concatenated CPU prediction method, depicted in Figure~\ref{fig:concatenated}(b). This method predicts the CPU utilization of the Guest and Host in a cascaded manner. First, Model-G takes the bandwidth requirement and message size as inputs and generates a prediction for \textit{Guest CPU} utilization. Subsequently, Model-H receives the predicted \textit{Guest CPU} utilization as input, along with the bandwidth requirement and message size, to predict \textit{Host CPU} utilization.
+We then compare the accuracy of the separate and concatenated CPU prediction methods. As shown in Figure~\ref{fig:concatenated}(d), the concatenated prediction method significantly reduces the over- and under-allocation issues observed in the separate prediction method depicted in Figure~\ref{fig:concatenated}(c). For instance, the number of instances where allocation errors exceed $5$\% decreases from $16$ to $8$, representing $50$\% reduction. Furthermore, the concatenated prediction method improves the accuracy, especially for high CPU utilization, by providing predictions that align more closely with the actual values. When evaluated using RMSLE, the concatenated prediction method achieves a value of $0.2068$, which is approximately $7.1$\% lower than the $0.2214$ RMSLE achieved by the separate prediction method\footnote{Note that RMSLE increases in Figure~\ref{fig:concatenated} compared to Table~\ref{table:model} because the number of data samples increases by double with the finer-grained data collection.}.
+
+\cut{
+\section{\name Implementation}
+\label{sec:implementation}
+
+We implement the \name manager and the collector as user-level daemons in Linux.
+The workflow begins with the \name manager receiving HTTP POST requests from users in {\tt json} format. These requests specify the target bandwidth value (\ie, network throughput), the target workload, and message size. \cut{Upon receiving a request, the \name manager checks whether pre-trained Model-G and Model-H are available for the target workload. 
+If the pre-trained models are available, the \name manager directly performs CPU predictions without activating the \name collector. Otherwise, the \name manager triggers the \name collector to generate a new training dataset for the target workload.}
+Note that when \name manager receives user requests, the target workload runs under the default CPU scheduler until the trained models for CPU translation are ready.
+
+For training data collection, the \name collector issues a set of commands via {\tt ssh} to a test VM to execute the target workload.
+While the test VM runs the workload, the \name collector measures key metrics such as network bandwidth, CPU utilization, and the number of packets processed per second.
+These measurements are then compiled into a {\tt csv} file and sent to the \name manager.
+The entire data collection process takes approximately $14$ minutes in our default hardware configuration (see {\tt Config1} in Table~\ref{table:configs} and \S\ref{subsec:evalsetup}).
+This is significantly faster than other approaches that rely on historical usage data~\cite{bashir2021take} or reinforcement learning~\cite{qiu2020firm}, often requiring over an hour to complete. Considering that recent data analytics and enterprise workloads typically run for several hours~\cite{rzadca2020autopilot, bashir2021take, amvrosiadis2018diversity, cano2016characterizing}, the data collection time required by \name is practical for deployment in such long-running scenarios.
+
+The \name collector provides a CPU contention-free environment to the test VM during data collection, allowing the CPU allocation for the corresponding Host process to vary up to $100$\%.
+However, in real-world scenarios where multiple VMs share the same physical cores, CPU contention may prevent SLO-configured VMs from achieving the required CPU utilization.
+To address this, \name first evenly distributes vCPUs across physical cores to minimize CPU contention among SLO-configured VMs. And then it leverages the Linux {\tt cgroup} mechanism~\cite{cgroup} to allow the SLO-configured VM to consume more CPU time than its fair share, ensuring that the target VM receives sufficient CPU resources to meet its bandwidth requirements.% 
+
+For model training, the \name manager preprocesses the data received from the \name collector, adapting it to the model's feature requirements and converting it into tensors. These tensors are then used to train both Model-G and Model-H.
+Note that both Model-G and Model-H are based on the default parameter setting of {\tt RandomForestRegressor} in {\tt scikit-learn}, which includes {\tt n\_estimators}=100 (the number of decision trees) and {\tt max\_depth}=None (allowing each tree to expand fully until it reaches pure leaf nodes or until other stopping criteria are met). The choice of {\tt n\_estimators}=100 balances the prediction accuracy with computational efficiency, while setting {\tt max\_depth}=None enables the model to capture complex patterns in the data.
+Finally, the \name manager enforces the Host CPU allocation from our concatenated prediction method. 
+Specifically, the \name manager configures the CPU quota for the Host. For instance, if the predicted \textit{Host CPU} allocation is $15$\%, the \name manager sets {\tt cpu.cfs\_quota\_us} to $15000$ while keeping the default value of {\tt cpu.cfs\_period\_us} at $100000$, thereby allowing the Host to use up to $15$\% of the total CPU capacity.
+}

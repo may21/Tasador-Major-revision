@@ -1,0 +1,309 @@
+\section{Evaluation}
+\label{sec:eval}
+The \name framework is implemented as two user-level daemons in Linux: the \name manager and the \name collector. The manager receives user requests in JSON format via HTTP POST, specifying the target bandwidth, workload, and message size, and initially executes the workload under the default CPU scheduler until the trained models for CPU translation become available. For model training, the collector remotely executes the target workload on a test VM via {\tt ssh}, gathers key performance metrics such as bandwidth, CPU utilization, and packet processing rate, and returns them as a {\tt csv} dataset to the manager. The collected data are then preprocessed and transformed into tensors for training two Random Forest models (Model-G and Model-H) using the default {\tt scikit-learn} parameters ({\tt n\_estimators}=100, {\tt max\_depth}=None), balancing accuracy and computational cost. Finally, the \name manager enforces the predicted Host CPU allocation by configuring the Linux {\tt cpu.cfs\_quota\_us} parameter to reflect the model’s output.
+
+This section evaluates \name in a KVM-based virtualized environment.
+We begin by outlining our evaluation setup (\S\ref{subsec:evalsetup}) and then present the results in the following subsections.
+First, we evaluate \name performance by comparing it to existing network scheduling and vCPU prioritization schemes (\S\ref{subsec:evaltc}).
+Next, we provide a qualitative comparison of \name with recent studies that leverage state-of-the-art ML techniques, including FIRM~\cite{qiu2020firm}, Sinan~\cite{zhang2021sinan}, and Autothrottle~\cite{wang2024autothrottle} (\S\ref{subsec:evalcomp}), followed by a performance comparison with a widely used deep learning model (\S\ref{subsec:evalmlp}).
+We then demonstrate the effectiveness of \name with real-world applications such as Webserver and Memcached (\S\ref{subsec:evaldiff}).
+Finally, we describe the overheads of \name on unseen workloads (\S\ref{apdx:evalpred}).
+Several additional evaluation results (including performance with noisy neighbors, performance with different hardware configurations, etc.) can be found in Appendix~\ref{apdx}.
+
+
+\subsection{Evaluation Setup}
+\label{subsec:evalsetup}
+
+As described in \S\ref{sec:design}, \name offers a framework capable of building a translation model for new hardware setups within $16$ minutes, while consistently maintaining accurate prediction performance across different hardware configurations.
+Consequently, our evaluation focuses on the default hardware setup, {\tt Config1} in Table~\ref{table:configs} (See further results for {\tt Config2} in Section~\ref{subsec:evaltc}, which show a similar performance trend to {\tt Config1}).%~\ref{apdx:evalconf}).
+
+\paragraphb{Hardware setup}
+We use two physical machines equipped with an Intel Xeon E5-2650v2@2.6GHz 10-core processor with hyper-threading off, $256$GB memory, and a $512$GB SSD. Also, the machines have a dual-port Intel 82599EB $10$Gbps NIC that is connected to each other via a $10$Gbps switch.
+Both machines run Linux kernel 5.4 and enable virtualization using KVM. We then create an SLO-configured VM that operates with the same Linux kernel version.
+To maximize CPU efficiency in network processing~\cite{cai2021}, we enable TCP Segmentation Offload (TSO) and Generic Receive Offload (GRO) at both guest and host. The maximum transmission unit (MTU) size is $1500$B.
+
+\paragraphb{Evaluated workloads}
+We primarily use Netperf for our microbenchmark; our Netperf workload continuously generates TCP messages (ranging from $64$B to $1024$B) and sends them to the peer machine, which makes it suitable for the baseline evaluation. 
+We also evaluate \name with two real-world applications, Apache Webserver, and Memcached.
+To generate HTTP requests, we use the {\tt wrk} benchmarking tool, which retrieves $1$KB files from the Webserver. Note that the file size is chosen based on typical log sizes found in production datacenters~\cite{sizeofthelogfile}.
+In Memcached workloads, we employ the Memaslap tool~\cite{memaslap} to send requests to the Memcached server, consisting of a distribution of $10$\% SET and $90$\% GET requests. We use the default settings of Memaslap with $64$B keys and $1$KB values~\cite{han2012megapipe}.
+Lastly, we use two performance metrics: (1) normalized bandwidth, the network bandwidth normalized to the target network bandwidth, and (2) total CPU utilization, including both Host and Guest CPU usage.
+
+
+\subsection{Microbenchmarks}
+\label{subsec:evaltc}
+
+We first evaluate \name in terms of CPU prediction accuracy and CPU efficiency with Netperf benchmarks, 
+using the same configurations described in \S\ref{sec:motivation}.
+
+\begin{figure}
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_tc64_fin.pdf}
+    \label{fig:netperf_64_share}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_tc1024_fin.pdf}
+    \label{fig:netper_1024_share}
+  }
+%  \vspace{-0.1in}
+  \caption{\name (TS) reduces the total CPU utilization compared to {\tt tc} while meeting the bandwidth requirements accurately.
+  %See \S\ref{subsec:evaltc} for more details.
+  }
+  \label{fig:comparison_tc}
+  \vspace{-0.2in}
+\end{figure}
+
+\begin{figure}
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_share64_fin.pdf}
+    \label{fig:comparison_share1}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.225\textwidth]{figure/compare_share1024_pact.pdf}
+    \label{fig:comparison_share2}
+  }
+  \caption{\name (TS) performs accurate CPU predictions in all cases, while vCPU prioritization (PR) suffers from high fluctuation in network bandwidth.}
+  \label{fig:comparison_share} 
+  \vspace{-0.2in}
+\end{figure}
+
+\paragraphb{Comparison with network scheduling scheme}
+Similar to Figure~\ref{fig:network_perf}, we increase the target network bandwidth from $100$Mbps to $400$Mbps with message sizes of $64$B and $1024$B.
+In Figure~\ref{fig:comparison_tc}, the normalized bandwidth decreases as the target bandwidth increases when using {\tt tc} for both $64$B and $1024$B messages. This result indicates that {\tt tc} struggles to achieve accurate rate-limiting due to insufficient CPU resources. 
+For instance, {\tt tc} achieves the normalized bandwidth of $0.98$ for $64$B messages with the $100$Mbps requirement, when ample CPU resources are available. 
+However, as the target bandwidth increases to $400$Mbps, the normalized bandwidth drops to $0.38$ (approximately $\frac{150}{400}$) as shown in Figure~\ref{fig:comparison_tc}(a), because {\tt tc} reaches up to $150$Mbps with $100$\% CPU utilization, as discussed in Figure~\ref{fig:network_perf}(a).
+On the other hand, in Figure~\ref{fig:comparison_tc}, \name consistently achieves precise rate-limiting accuracy with the normalized bandwidth of $1.00$ regardless of the message size. 
+Especially, we observe that \name achieves this level of accuracy while maintaining significantly lower CPU utilization, offering ${\sim}6.5\times$ improvements over {\tt tc} in terms of total CPU utilization. 
+Our further investigation reveals that providing lower CPU allocation to the Host can positively impact the overall network processing capacity. 
+It allows more data to accumulate in the Host's Tx queue before the CPU is scheduled for Host processing, increasing the likelihood of generating larger packets via TSO. As a result, per-byte network processing overhead can be significantly reduced. For instance, when the target bandwidth is set to $300$Mbps with a message size of $1024$B (Figure~\ref{fig:comparison_tc}(b)), {\tt tc} achieves an average packet size of only $1.1$KB, whereas \name increases the average packet size to $62.4$KB.
+This highlights \name's ability to optimize CPU allocation accurately and effectively.
+
+
+\definecolor{ForestGreen}{RGB}{34,139,34}
+\renewcommand{\arraystretch}{1.3}
+\begin{table*}
+\centering\resizebox{\linewidth}{!}{
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{Title}        & \textbf{Model}                & \textbf{Input}                                 & \textbf{Output}      & \textbf{Data collection time} & \textbf{Training time}                                                \\ \hline\hline
+\textbf{FIRM}~\cite{qiu2020firm}         & SVM+Reinforcement learning    & Resource usage, performance counts             & Resource limits      & \textcolor{black}{1 hour}                          & \textcolor{black}{1 hour}                                                            \\ \hline
+\textbf{Sinan}~\cite{zhang2021sinan}        & CNN+Boosted trees             & Resource usage \& allocation, latency         & Tail latency         & \textcolor{red}{15 hours}                      & \textcolor{ForestGreen}{33 seconds} \\ \hline %\begin{tabular}[c]{@{}c@{}}\textcolor{ForestGreen}{33 seconds}\\ (on NVIDIA Titan XP)\end{tabular} \\ \hline
+\textbf{Autothrottle}~\cite{wang2024autothrottle}& Online reinforcement learning & RPS, tail latencies, actual CPU allocation & CPU throttle targets & \textcolor{red}{12 hours}                        & \textcolor{ForestGreen}{$>$60 seconds}                                                               \\ \hline\hline
+\textbf{\name}               & Random forest regression      & Target bandwidth, message size, pps                         & CPU quota            & \textcolor{ForestGreen}{14 minutes}                        & \textcolor{ForestGreen}{73 seconds} \\ \hline %\begin{tabular}[c]{@{}c@{}}\textcolor{ForestGreen}{11 seconds}\\ (on Xeon CPU)\end{tabular}        
+\end{tabular}}
+  \vspace{0.1in}
+  \caption{\textbf{Comparison between \name and recent ML schemes.} \name minimizes data collection and model training time by utilizing relatively simple ML techniques, such as random forest regression, compared to previous studies. 
+  %See \S\ref{subsec:evalcomp} for more details.
+  }
+  \label{tab:comparison}
+ \vspace{-0.2in}
+\end{table*}
+\paragraphb{Comparison with vCPU prioritization}
+In Figure~\ref{fig:comparison_share}, we observe that vCPU prioritization suffers from high fluctuation in the normalized bandwidth in most cases, as discussed in \S\ref{sec:motivation}. For instance, with a message size of $64$B, the normalized bandwidth reaches ${\sim}1.53$ (Figure~\ref{fig:comparison_share}(a)). This increases further to ${\sim}7.15$ with a message size of $1024$B (Figure~\ref{fig:comparison_share}(b)) due to reduced per-byte packet processing overhead with larger messages.
+In contrast, \name effectively allocates appropriate CPU budgets to both the Guest and Host based on its CPU prediction model. This enables \name to consistently meet network bandwidth requirements, regardless of message size, achieving an average normalized bandwidth of $1.01$. 
+We note that the vCPU prioritization scheme always shows $100$\% core utilization, as it performs work-conserving scheduling using Linux CFS. In comparison, \name and {\tt tc} are non-work-conserving by regulating CPU quota or the volume of transmitted packets.
+
+
+\begin{comment}
+\paragraphb{Performance with Different Hardware}\label{apdx:evalconf}
+We repeat the experiment using {\tt Config2} (as detailed in Table~\ref{table:configs}) to see whether \name's effectiveness holds across different configurations. The {\tt Config2} servers are connected via $10$Gbps links, with all other software configurations remaining consistent with \S\ref{sec:eval}.
+
+Figures~\ref{fig:config2_result}(a) and (b) demonstrate \name's performance compared to {\tt tc}; similar to Figures~\ref{fig:comparison_tc}, \name achieves accurate bandwidth requirements while significantly reducing total CPU utilization. In Figures~\ref{fig:config2_result}(c) and (d), \name consistently provides accurate CPU predictions, while vCPU prioritization continues to show high fluctuations in network bandwidth, aligning with the results observed in Figure~\ref{fig:comparison_share}.
+\end{comment}
+
+
+
+
+\subsection{Comparison with Recent ML Schemes}
+\label{subsec:evalcomp}
+
+Recent studies have developed various ML models to achieve target SLOs for containers, leveraging state-of-the-art ML techniques such as deep learning and reinforcement learning (RL).
+For instance, Sinan~\cite{zhang2021sinan} employs a convolutional neural network (CNN) and boosted trees to assist clusters in allocating appropriate computing resources to meet latency SLOs. Similarly, FIRM~\cite{qiu2020firm} and Microsoft Autothrottle~\cite{wang2024autothrottle} seek to determine the optimal allocation of computing resources, such as CPU time, memory bandwidth, and last-level cache (LLC) bandwidth, using RL models. Table~\ref{tab:comparison} provides a comparison between \name and recent relevant studies, focusing on the model details, input and output values, and the time required for data collection and model training. 
+It indicates that CNN- and RL-based approaches often require longer data collection or training periods to achieve high accuracy. 
+For example, Sinan~\cite{zhang2021sinan} and Autothrottle~\cite{wang2024autothrottle} require $15$ and $12$ hours, respectively, to collect training data.  FIRM~\cite{qiu2020firm} takes a modest time of $1$ hour for both data collection~\cite{firm-code} and training.
+\name further reduces these times, requiring only $14$ minutes for data collection and $73$ seconds for model-G and model-H training by employing a relatively simple model---Random Forest Regression---while effectively predicting CPU allocations for both the Guest and Host.
+
+
+We also aimed to directly compare \name with these techniques in terms of model accuracy %and training efficiency 
+to demonstrate the effectiveness of our \name model.
+However, using their existing implementations~\cite{sinan-code,firm-code,autothrottle-code} was challenging for two reasons. First, they are specifically optimized for microservices where each service runs in individual containers, and SLOs are evaluated across all associated containers in an end-to-end manner. Consequently, their models are designed to control resource allocation for bottleneck microservices across containers, whereas \name manages CPU resources at the VM level. Second, their models incorporate additional features such as memory/disk usage, latency, and LLC metrics, while \name primarily focuses on CPU allocation. 
+These differences result in unfair comparisons under our evaluation scenarios.
+In fact, applying our Netperf dataset directly to their implementations yields poor performance. Therefore, instead of making direct comparisons, we develop a Multi-Layer Perceptron (MLP) model optimized for our Netperf dataset to evaluate \name's effectiveness against recent ML models, as discussed in the following subsection.
+
+
+\begin{figure}
+\centering
+  \subfloat[1 vCPU.] {
+    \includegraphics[width=0.225\textwidth]{figure/MLP_1vcpu_atc.pdf}
+    \label{fig:mlp1}
+  }
+  \subfloat[8 vCPUs.] {
+    \includegraphics[width=0.225\textwidth]{figure/MLP_8vcpu_atc.pdf}
+    \label{fig:mlp2}
+  }
+  \caption{{\bf MLP performance.} 
+  The MLP-based prediction shows $1.3\times$ lower accuracy (RMSE) compared to \name, even after $2000$ epochs. %despite a large number of epochs, requiring $61$\% more training time compared to \name. See \S\ref{subsec:evalmlp} for more details.
+  }
+  \label{fig:mlp}
+   \vspace{-0.2in}
+\end{figure}
+
+
+\subsection{Comparison with MLP}
+\label{subsec:evalmlp}
+We implement an MLP model, a widely used deep-learning approach for solving a variety of supervised learning tasks, including regression. MLP offers a good balance between accuracy and computational efficiency. Our MLP model consists of six linear layers and uses Mean Square Error (MSE) as the loss function. The number of layers is empirically determined by evaluating RMSE to ensure optimal performance.
+For the activation function, we use the Gaussian Error Linear Unit (GELU), which applies the Gaussian cumulative distribution function to assign weights to inputs based on their values. GELU provides smoother and more efficient nonlinear transformations for our dataset compared to other activation functions.
+
+We further optimize the model using the AdamW optimizer with a learning rate of $0.001$. Hyperparameters, such as the number of epochs ($2000$) and batch size ($256$), are tuned via grid search optimization. The model is trained on Netperf data, with message sizes ranging from $64$B to $1024$B. Key training features include network throughput, Host and Guest CPU utilization, the number of packets processed per second, and the Host CPU quota ratio. 
+The data is split into training and test sets with an $80$--$20$ ratio, and features are normalized to a range of $0$ to $1$ using {\tt MinMaxScaler} to ensure balanced weighting during training. To monitor performance and prevent overfitting, we perform periodic validation every $400$ epochs.
+
+Figure~\ref{fig:mlp} illustrates the model accuracy in terms of RMSE, normalized against \name's performance, and the training time for our MLP model. For a fair comparison, we use the same dataset, which consists of $360$ samples.
+As shown in Figure~\ref{fig:mlp}, the accuracy of the MLP model improves with an increasing number of epochs, but \name still achieves better RMSE performance---$1.4\times$ better with $1$ vCPU (Figure~\ref{fig:mlp}(a)) and $1.3\times$ better with $8$ vCPUs (Figure~\ref{fig:mlp}(b)) at $2000$ epochs. 
+At this point, the training time for the MLP model increases to $38$ seconds for both $1$- and $8$-vCPU cases. While \name requires a longer training time ($73$ seconds, as shown in Table~\ref{tab:comparison}), achieving $1.3$--$1.4\times$ better accuracy for an additional $35$ seconds of training time is a reasonable tradeoff.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.38\textwidth]{figure/macro_mlp.pdf}
+%  \vspace{-0.1in}
+  \caption{
+  {\bf \name is effective across different workloads}, by more accurately meeting the given bandwidth requirements (\ie, achieving a normalized bandwidth close to $1.0$) compared to {\tt tc} and the MLP model. \small{The `+' symbol represents the mean value.}
+ % See \S\ref{subsec:evaldiff} for more details.
+ }
+  \label{fig:diffwork}
+  \vspace{-0.2in}
+\end{figure}
+\subsection{Real-world Applications}
+\label{subsec:evaldiff}
+
+\cut{We further evaluate the effectiveness of \name with two real-world applications, Apache Webserver and Memcached, while allocating $8$ vCPUs to the target VM. First, we test a fixed-load scenario by maintaining constant traffic loads for the applications to demonstrate how \name meets the target bandwidth across different workloads. Next, we explore a dynamic-load scenario by varying the traffic load below the target bandwidth to show that \name's ability to handle dynamic workloads effectively.}
+\kw{We evaluate \name using two widely deployed applications: Apache Webserver and Memcached. Unless stated otherwise, the target VM is configured with 8 vCPUs.}
+
+\paragraphb{Webserver traffic model}
+\kw{We generate HTTP traffic using a \emph{closed-loop concurrency} model: a fixed number of clients maintain concurrent TCP connections and issue a new request immediately after completing the previous one (i.e., no think time). 
+\textbf{Fixed-load:} we sustain 1{,}000 concurrent connections repeatedly fetching a 1\,KB static object to emulate a saturated small-object/API-like workload.
+\textbf{Dynamic-load:} we vary concurrency from 512 to 4 and 2 to emulate demand drop and near-idle periods.
+This setup produces small request/response messages; packetization is governed by TCP MSS and HTTP headers, yielding high packet-processing pressure at the host under high concurrency.}
+
+%\paragraphb{Memcached traffic model}
+%\kw{We emulate a read-heavy caching tier with 1{,}000 concurrent clients issuing 100{,}000 operations per trial using the default GET/SET ratio (9:1). This workload generates high-rate, small request/response messages and stresses the host-side vhost/softirq processing path, allowing us to evaluate bandwidth fulfillment under realistic cache-style access patterns.}
+
+
+
+\paragraphb{Fixed-load scenario}
+For each application, we measure network bandwidth over $100$ iterations, randomly selecting target bandwidth values between $100$Mbps and its maximum achievable throughput.
+The normalized bandwidth, calculated relative to the target bandwidth, is plotted in Figure~\ref{fig:diffwork}, comparing \name with {\tt tc} and our MLP model (\S\ref{subsec:evalmlp}).
+In the figure, \name consistently outperforms the other schemes, achieving an average normalized bandwidth of $1.0$ for Webserver and $0.99$ for Memcached, accurately meeting the bandwidth requirements.
+To further evaluate the effectiveness of \name, we define ``(normalized) bandwidth variation'' as the standard deviation of the normalized target bandwidth ($1.0$). 
+\name achieves $2.25\times$ lower bandwidth variation than both {\tt tc} and the MLP model for Webserver, and $3.0\times$ and $2.2\times$ lower variation than {\tt tc} and the MLP model, respectively, for Memcached.
+
+We observe that {\tt tc} struggles to meet high target bandwidth values exceeding $800$Mbps for Webserver and $200$Mbps for Memcached. These results align with Figure~\ref{fig:comparison_share}, showing the limitations of network scheduling-based solutions. The MLP model shows either lower accuracy in achieving target bandwidth (with Webserver) or higher bandwidth variation (with Memcached) compared to \name, due to its lower CPU prediction accuracy as discussed in \S\ref{subsec:evalmlp}.
+
+\begin{figure}
+% \vspace{-0.4in}
+\centering
+  \subfloat[Normalized throughput.] {
+    \includegraphics[width=0.22\textwidth]{figure/dynamic_web_atc.pdf}
+    \label{fig:dynamic1}
+  }
+  \subfloat[CPU utilization(\%).] {
+    \includegraphics[width=0.225\textwidth]{figure/dynamic_web_cpu_fin.pdf}
+    \label{fig:dynamic2}
+  }
+%  \vspace{-0.1in}
+  \caption{\name performance under dynamic traffic loads (Webserver on VM1).}
+  \label{fig:dynamic_web} 
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small % Slightly smaller but still standard readable size
+\setlength{\tabcolsep}{3pt} % Tighten horizontal space
+\caption{\kw{Over-provisioning waste in CPU utilization}}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Interval (s)} & \textbf{0} & \textbf{30} & \textbf{60} & \textbf{90} & \textbf{120} & \textbf{150} & \textbf{180} \\ \midrule
+Avg. Load (\%)        & 100           & 25             & 12.5           & 0               & 12.5             & 25               & 100              \\
+Avg. Waste (\%)       & 2.5           & 2.5            & 18.0           & 56.1            & 17.8             & 2.6              & 3.0              \\
+VM2 Change (\%)       & --            & -10.7          & 82.0           & 121.3           & -120.6           & -70.2            & -17.3            \\ \bottomrule
+\end{tabular}
+\end{table}
+\begin{comment}
+\paragraphb{Dynamic-load scenario} In this experiment, we run two VMs: VM1, running Webserver with a target bandwidth of $1$Gbps and VM2, running Sysbench, a CPU-intensive workload managed by the default CPU scheduler instead of \name. Both VMs are configured with $8$ vCPUs, sharing the same physical CPU cores. 
+Initially, \name allocates the predicted CPU resources to VM1, allowing it to achieve a normalized throughput of $1.0$, meeting the target bandwidth. After $30$ seconds, the traffic load of Webserver is gradually reduced to $0$ and then increased back to $1$Gbps, as shown in Figure~\ref{fig:dynamic_web}(a).
+We also plot the Sysbench throughput, normalized to its maximum throughput at $800$\% CPU utilization. When Webserver generates no traffic load (between $90$--$120$ seconds), Sysbench achieves a normalized throughput of $1.0$, fully utilizing the available CPU resources. 
+Figure~\ref{fig:dynamic_web}(b) illustrates how \name dynamically reallocates unused CPU utilization from Webserver to Sysbench during traffic variations. 
+This is possible because configuring CPU quota in \name allows the work-conserving CPU scheduler to redistribute unused CPU resources.
+A similar trend is observed with Memcached (see Appendix~\ref{apdx:evalmem}).
+\end{comment}
+
+\paragraphb{Dynamic-load scenario}
+\kw{In this experiment, we run two VMs: VM1 running Webserver with a target bandwidth of $1$Gbps and VM2 running Sysbench, a CPU-intensive workload managed by the default CPU scheduler instead of \name. Both VMs are configured with $8$ vCPUs and share the same physical CPU cores.
+Initially, \name applies the predicted host CPU quota for VM1, enabling VM1 to meet the target bandwidth (normalized throughput $=1.0$). After $30$ seconds, the Webserver load is gradually reduced to $0$ and then increased back to $1$Gbps (Figure~\ref{fig:dynamic_web}(a)).
+When VM1 becomes idle (between $90$--$120$ seconds), Sysbench reaches its maximum normalized throughput ($=1.0$), indicating that the CPU budget reserved as VM1's quota is not consumed and is reclaimed by the work-conserving scheduler.}
+
+\kw{Importantly, \name enforces a \emph{maximum} CPU budget on the host-side packet-processing path; under off-peak load, VM1's packet-processing threads are not continuously runnable, so the enforced quota does not translate into persistent CPU occupation.
+To quantify the resulting trade-off, we additionally report the gap between \name's allocated CPU cap and the CPU actually used (and the minimum CPU required to sustain the instantaneous load), showing that while worst-case provisioning sets a conservative cap, the scheduler reclaims the unused portion and makes it available to other VMs during off-peak periods (Figure~\ref{fig:dynamic_web}(c)).
+A similar trend is observed with Memcached (Appendix~\ref{apdx:evalmem}).}
+
+
+
+
+
+\cut{
+\subsection{Performance with Noisy neighbors}
+\label{apdx:noisy}
+
+We introduce noisy neighbors to evaluate how \name performs under high contention for host resources; noisy neighbors~\cite{pu2012your} aggressively consume computing resources as the target VM and bring resource contention that can affect the network performance of the target VM. For this experiment, we set a specific network requirement ($200$Mbps) with $1024$B messages -- we choose this configuration as the normalized bandwidth is nearly $1.0$ for all schemes (see Figure~\ref{fig:comparison_tc}(b) and Figure~\ref{fig:comparison_share}(b)).
+Then, we use two metrics: SLO violation rate and bandwidth variation (defined in \S\ref{subsec:evaldiff}) to represent the effectiveness of the translation in meeting the bandwidth requirement (SLO). The SLO violation rate identifies cases where the normalized bandwidth falls below $0.95$, indicating instances where the bandwidth requirement is not met.
+
+We run three types of noisy neighbors each of which significantly consumes either CPU, last-level cache (LLC), or network bandwidth.
+First, the CPU-bound neighbor is the customized CPU stressor based on iBench and {\tt stree-ng}~\cite{qiu2020firm}. It exhausts all available CPU cores through intensive floating-point calculations, integer operations, and bit manipulation. Second, the LLC neighbor utilizes iBench and {\tt pmbw} to perform both streaming and random access operations to fully utilize the bandwidth and capacity of the entire LLC~\cite{qiu2020firm}.
+Lastly, the network-bound neighbor executes Netperf with default configuration settings, including $16$KB message sizes and no bandwidth limitation to fully utilize the network capacity of the host server.
+\begin{table}
+\centering
+\resizebox{0.9\linewidth}{!}{
+\begin{tabular}{@{}crrr@{}}
+\toprule
+\multicolumn{1}{l}{} & \multicolumn{1}{c}{Tasador} & \multicolumn{1}{c}{Traffic control} & \multicolumn{1}{c}{Prioritization} \\ \midrule
+CPU                  & 0\% (0.2)                     & 20\% (7.6)                          & 5\% (25.5)                         \\
+L3                   & 0\% (0.0)                       & 0\% (6.1)                             & 5\% (47.7)                         \\
+Network              & 0\% (0.1)                     & 10\% (7.3)                          & 0\% (72.9)                           \\ \bottomrule
+\end{tabular}}
+  \vspace{0.1in}
+  \caption{\name is rarely affected by noisy neighbors in terms of both SLO violation rate (\%) and bandwidth variation (in parentheses).
+  %See \S\ref{apdx:noisy} for more details.
+  }
+  \label{fig:anomaly}
+  \vspace{-0.2in}
+\end{table}
+
+Table~\ref{fig:anomaly} shows that \name remains unaffected by the presence of noisy neighbors -- \ie, SLO violations are consistently at zero with \name, regardless of the type of noisy neighbors. Also, \name maintains minimal bandwidth variation (parenthesized in Table~\ref{fig:anomaly}), which means that the target VM consistently attains network performance close to the target bandwidth.
+On the other hand, {\tt tc} increases the SLO violation rate because VMs running alongside noisy neighbors may struggle to meet their bandwidth requirements. In particular, when the target VM runs with a CPU-bound neighbor, {\tt tc} experiences high SLO violation rate of $20$\%. This is primarily due to the insufficient CPU allocation the target VM receives as a result of contention with the CPU-bound neighbor. In comparison, vCPU prioritization reduces SLO violations compared to {\tt tc}. However, it shows high bandwidth variation due to inaccurate CPU allocation. This implies that the target VM receives significantly higher network bandwidth than the specified SLO. With vCPU prioritization, the bandwidth variation increases, ranging from $25.5$ to $72.9$, resulting in network bandwidth much higher than the target bandwidth. For example, the target VM achieves an average network bandwidth of $277$Mbps when running with a network-bound neighbor, which is $39$\% higher than the target bandwidth.}
+
+
+\subsection{\name Overheads for Unseen Workloads}
+\label{apdx:evalpred}
+
+When \name receives requests for unseen workloads beyond Netperf, Memcached, and Webserver, \name follows three steps, as illustrated in Figure~\ref{fig:arch_iott}. The overall overheads introduced by unseen workloads are categorized into data collection overhead (steps $2$--$4$ in Figure~\ref{fig:arch_iott}), training overhead (step 5), and prediction overhead (step 6).
+We measure the data collection and training overheads as depicted in Table 3; it is observed that TASADOR takes around 14 minutes and 73 seconds, respectively, regardless of the unseen workloads.
+This result shows that \name's data collection and training time remain consistent even when workloads show different runtime behavior. This is due to the design of \name; the Host CPU allocation is done independently of workload behavior. Specifically, we increase the Host CPU allocation from 1\% to 100\%, generating 81 measurement samples regardless of workloads. The measurement duration for each sample is also fixed, which leads to consistent data collection and training time across all workloads.
+
+In this subsection, we evaluate the prediction overhead, which may increase as the number of user requests to the \name manager increases. To quantify this overhead, we measure the prediction delay---the time required to complete CPU prediction in the \name manager---as the number of concurrent user requests ($N$) increases, as shown in Figure~\ref{fig:latency}.
+Our results show that the average latency increases from $135$ms to $387$ms as the number of requests increases from $100$ to $10000$, and more than $75$\% of user requests are handled within $300$ms when $N{<}1000$.
+Even under the worst case, the maximum delay remains below $0.8$s with $10000$ concurrent requests. These results suggest that \name can efficiently handle many concurrent requests within $1$ second, which is sufficiently tolerant for real-world cluster environments where workloads typically run for extended durations~\cite{roy2015inside, dhukic2019advance}.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.38\textwidth]{figure/latency_pact25.pdf}
+  \vspace{-0.1in}
+  \caption{The prediction latency of \name is relatively low (0.8s at maximum) even though the number of concurrent requests increases to 10000. 
+  %See \S\ref{apdx:evalpred} for more details.
+  }
+  \label{fig:latency}
+  \vspace{-0.2in}
+\end{figure}
+
+
+

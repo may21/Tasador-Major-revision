@@ -1,0 +1,13 @@
+\vspace{-0.05in}
+\section{Conclusion}
+
+This paper demonstrates that translating "network bandwidth to CPU" is not straightforward in virtualized environments. The exact amount of CPU allocation needed for a specific bandwidth requirement is dependent on many factors, including workloads, message sizes, and hardware configurations.
+We present \name, an ML framework for the network bandwidth to CPU translation. \name performs three main tasks: (1) training data collection, (2) model training and CPU prediction, and (3) CPU allocation enforcement. We implement \name in a KVM-based virtualized environment. \name requires only ${\sim}16$ minutes for collecting data and training models, which makes it easily adaptable to new workloads. Furthermore, \name achieves ${\sim}6.5\times$ improvements over the existing schemes regarding CPU allocation efficiency. We believe that \name is generalizable, as it collects training data for individual workloads and builds tailored models specific to each scenario. \kw{As future work, we plan to extend \name to include a closed-loop monitoring and feedback system. By periodically comparing real-time bandwidth performance against predicted CPU usage, the framework will be able to handle rare mispredictions or environmental drifts. This extension will allow dynamic re-allocation, further optimizing resource oversubscription and ensuring strict SLO adherence even in highly volatile cloud environments.}
+
+
+\cut{This paper demonstrates that translating ``network bandwidth to CPU'' is not straightforward in virtualized environments. The exact amount of CPU allocation needed for the bandwidth requirement is dependent on many factors, including workloads, message sizes, and hardware configurations.
+We present \name, an ML framework for the network bandwidth to CPU translation. \name performs three main tasks: (1) training data collection, (2) model training and CPU prediction, and (3) CPU allocation enforcement. We implement \name in a KVM-based virtualized environment. \name requires only ${\sim}16$ minutes for collecting data and training models, which makes it easily adaptable to new workloads. 
+Furthermore, \name achieves ${\sim}6.5\times$ improvements over the existing schemes regarding CPU allocation efficiency. We believe that \name is generalizable, as it collects training data for individual workloads and builds tailored Model-G and Model-H specific to each workload.}
+
+%\section*{Acknowledgement}
+%This work was supported by National Research Foundation of Korea funded by the Ministry of Science, ICT (No. NRF-2019H1D8A2105513).

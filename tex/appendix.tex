@@ -1,0 +1,128 @@
+\clearpage
+\begin{figure}
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/612_share_64.pdf}
+    \label{fig:vcpu_612_64}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/612_share_1024.pdf}
+    \label{fig:vcpu_612_1024}
+  }
+ % \vspace{-0.1in}
+  \caption{Changes in network bandwidth depending on the vCPU priority level differs in newer Linux kernel.
+  }
+  \label{fig:vcpu_612}
+  \vspace{-0.2in}
+\end{figure}
+
+
+
+\begin{figure}[!ht]
+\centering
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/config2_64.pdf}
+    \label{fig:config2_64}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/config2_1024.pdf}
+    \label{fig:config2_1024}
+  }\\
+  \subfloat[Message size: $64$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/config2_share_64_new.pdf}
+    \label{fig:config2_64_share}
+  }
+  \subfloat[Message size: $1024$B.] {
+    \includegraphics[width=0.22\textwidth]{figure/config2_share_1024.pdf}
+    \label{fig:config2_1024_share}
+  }\caption{{\bf \name performance with {\tt Config2}.}
+  (a)(b) Compared to {\tt tc}, \name (TS) reduces the total CPU utilization while meeting the bandwidth requirements accurately. (c)(d) Compared to vCPU prioritization, \name (TS) performs accurate CPU predictions in all cases while vCPU prioritization (PR) suffers from high fluctuation in network bandwidth, consistent with the results in Figures~\ref{fig:comparison_tc} and~\ref{fig:comparison_share}.
+  %See \S\ref{apdx:evalconf} for more details.
+  }
+  \label{fig:config2_result}
+\end{figure}
+\appendix
+\section{Appendix}
+\label{apdx}
+This section provides additional evaluation results, including performance with different hardware configurations, noisy neighbors, and a dynamic-load scenario with Memcached.
+
+\subsection{Performance with Different Hardware}
+\label{apdx:evalconf}
+
+We repeat the microbenchmark evaluation from \S\ref{subsec:evaltc} using {\tt Config2} (as detailed in Table~\ref{table:configs}) to see whether \name's effectiveness holds across different configurations. The {\tt Config2} servers are connected via $10$Gbps links, with all other software configurations remaining consistent with \S\ref{sec:eval}.
+
+Figures~\ref{fig:config2_result}(a) and (b) demonstrate \name's performance compared to {\tt tc}; similar to Figures~\ref{fig:comparison_tc}, \name achieves accurate bandwidth requirements while significantly reducing total CPU utilization. In Figures~\ref{fig:config2_result}(c) and (d), \name consistently provides accurate CPU predictions, while vCPU prioritization continues to show high fluctuations in network bandwidth, aligning with the results observed in Figure~\ref{fig:comparison_share}.
+
+\subsection{Performance with Noisy neighbors}
+\label{apdx:noisy}
+\begin{table}
+\centering
+\resizebox{0.9\linewidth}{!}{
+\begin{tabular}{@{}crrr@{}}
+\toprule
+\multicolumn{1}{l}{} & \multicolumn{1}{c}{Tasador} & \multicolumn{1}{c}{Traffic control} & \multicolumn{1}{c}{Prioritization} \\ \midrule
+CPU                  & 0\% (0.2)                     & 20\% (7.6)                          & 5\% (25.5)                         \\
+L3                   & 0\% (0.0)                       & 0\% (6.1)                             & 5\% (47.7)                         \\
+Network              & 0\% (0.1)                     & 10\% (7.3)                          & 0\% (72.9)                           \\ \bottomrule
+\end{tabular}}
+  \vspace{0.1in}
+  \caption{\name is rarely affected by noisy neighbors in terms of both SLO violation rate (\%) and bandwidth variation (in parentheses).
+  }
+  \label{fig:anomaly}
+  %\vspace{-0.2in}
+\end{table}
+
+\kw{To evaluate \name's robustness under high host-resource contention, we introduce "noisy neighbors"~\cite{pu2012your} that aggressively consume resources shared with the target VM. We set a target network requirement of $200$ Mbps with $1024$ B messages, a configuration where the normalized bandwidth is approximately $1.0$ across all schemes under ideal conditions (see Figure~\ref{fig:comparison_tc}(b)). Then, we employ two metrics to evaluate SLO adherence: the SLO violation rate (the number of instances where normalized bandwidth drops below $0.95$) and bandwidth variation. We test against three types of stressors:
+\begin{itemize}
+\item \textbf{CPU-bound:} Exhausts all cores using floating-point and integer operations via \texttt{stress-ng}.
+\item \textbf{LLC-bound:} High-frequency random and streaming memory access via \texttt{pmbw} to saturate the last-level cache.
+\item \textbf{Network-bound:} Saturated host network capacity using \texttt{Netperf} with $16$ KB messages and no rate limiting.\end{itemize}}
+
+\kw{As shown in Table~\ref{fig:anomaly}, \name remains virtually unaffected by contention, maintaining a $0$\% SLO violation rate and negligible bandwidth variation. This resilience stems from \name's direct mapping and isolation mechanism. Unlike Linux \texttt{tc}, which operates primarily at the networking layer and relies on the underlying OS scheduler for CPU time, \name proactively translates the $200$ Mbps requirement into the exact CPU cycles necessary to sustain that throughput. By explicitly allocating these calculated CPU shares to the target VM's vCPU, \name ensures that the resources required for network processing are strictly reserved and isolated from the scheduler's attempts to balance load with the CPU-bound neighbor.}
+
+\kw{In contrast, \texttt{tc} suffers a $20$\% violation rate under CPU contention. Because \texttt{tc} lacks a mechanism to guarantee the CPU cycles required to process packets at the specified rate, the target VM's network processing is frequently preempted or delayed by the CPU-bound stressor. While vCPU prioritization reduces these violations, it lacks the precision of \name's translation model, leading to significant over-provisioning and high bandwidth variation (up to $72.9$). For instance, under network-bound noise, prioritization results in a $39$\% higher bandwidth than requested ($277$ Mbps).}
+
+\kw{Ultimately, \name's advantage lies in its ability to treat network SLOs as a multi-resource allocation problem. By shielding the network-related CPU demand from host-level contention, \name maintains stable performance where traditional packet-level scheduling (\texttt{tc}) or coarse-grained prioritization fails.}
+
+
+
+\cut{
+We introduce noisy neighbors to evaluate how \name performs under high contention for host resources;
+noisy neighbors~\cite{pu2012your} aggressively consume computing resources as the target VM and bring resource contention that can affect the network performance of the target VM. For this experiment, we set a specific network requirement ($200$Mbps) with $1024$B messages -- we choose this configuration as the normalized bandwidth is nearly $1.0$ for all schemes (see Figure~\ref{fig:comparison_tc}(b) and Figure~\ref{fig:comparison_share}(b)).
+Then, we use two metrics: SLO violation rate and bandwidth variation (defined in \S\ref{subsec:evaldiff}) to represent the effectiveness of the translation in meeting the bandwidth requirement (SLO). The SLO violation rate identifies cases where the normalized bandwidth falls below $0.95$, indicating instances where the bandwidth requirement is not met.
+
+
+We run three types of noisy neighbors, each of which significantly consumes either CPU, last-level cache (LLC), or network bandwidth.
+First, the CPU-bound neighbor is the customized CPU stressor based on iBench and {\tt stree-ng}~\cite{qiu2020firm}. It exhausts all available CPU cores through intensive floating-point calculations, integer operations, and bit manipulation. Second, the LLC neighbor utilizes iBench and {\tt pmbw} to perform both streaming and random access operations to fully utilize the bandwidth and capacity of the entire LLC~\cite{qiu2020firm}.
+Lastly, the network-bound neighbor executes Netperf with default configuration settings, including $16$KB message sizes and no bandwidth limitation to fully utilize the network capacity of the host server.
+
+Table~\ref{fig:anomaly} shows that \name remains unaffected by the presence of noisy neighbors -- \ie, SLO violations are consistently at zero with \name, regardless of the type of noisy neighbors. Also, \name maintains minimal bandwidth variation (parenthesized in Table~\ref{fig:anomaly}), which means that the target VM consistently attains network performance close to the target bandwidth.
+On the other hand, {\tt tc} increases the SLO violation rate because VMs running alongside noisy neighbors may struggle to meet their bandwidth requirements. In particular, when the target VM runs with a CPU-bound neighbor, {\tt tc} experiences high SLO violation rate of $20$\%. This is primarily due to the insufficient CPU allocation the target VM receives as a result of contention with the CPU-bound neighbor. In comparison, vCPU prioritization reduces SLO violations compared to {\tt tc}. However, it shows high bandwidth variation due to inaccurate CPU allocation. This implies that the target VM receives significantly higher network bandwidth than the specified SLO. With vCPU prioritization, the bandwidth variation increases, ranging from $25.5$ to $72.9$, resulting in network bandwidth much higher than the target bandwidth. For example, the target VM achieves an average network bandwidth of $277$Mbps when running with a network-bound neighbor, which is $39$\% higher than the target bandwidth.}
+
+
+
+
+\subsection{Dynamic-load Scenario with Memcached}
+\label{apdx:evalmem}
+\begin{figure}
+\centering
+  \subfloat[Normalized throughput.] {
+    \includegraphics[width=0.22\textwidth]{figure/dynamic_mem_atc.pdf}
+    \label{fig:dynamic3}
+  }
+  \subfloat[CPU utilization(\%).] {
+    \includegraphics[width=0.225\textwidth]{figure/dynamic_mem_cpu_test.pdf}
+    \label{fig:dynamic4}
+  }
+  \caption{{\bf \name performance under dynamic traffic loads (Memcached on VM1).} \name allows the CPU-intensive VM2 (Sysbench) to dynamically utilize the unused CPU resources as VM1's traffic load varies.
+  VM1's CPU utilization includes the Host's CPU usage.}
+  \label{fig:dynamic_mem} 
+\end{figure}
+
+We repeat the dynamic-load scenario from \S\ref{subsec:evaldiff} with Memcached, as shown in Figure~\ref{fig:dynamic_mem}. 
+Similar to Figure~\ref{fig:dynamic_web}, we run two VMs: VM1, running Memcached with a target bandwidth of $1.5$Gbps, and VM2, running Sysbench, a CPU-intensive workload managed by the Linux CPU scheduler rather than \name. Both VMs are configured with $8$ vCPUs, sharing the same physical CPU cores. 
+The results show a similar trend to Figure~\ref{fig:dynamic_web}, demonstrating that \name dynamically reallocates unused CPU utilization from Memcached to Sysbench during traffic variations (Figure~\ref{fig:dynamic_mem}(b)).
+
+
+
+
