@@ -1,0 +1,188 @@
+Reviewer Comments
+
+Reviewer: 1
+
+Recommendation: Reject
+
+Comments:
+Strengths
++ The CPU efficiency improvement is impressive.
+
+Weaknesses
+- The design details are unclear to me.
+- The evaluation setup is unclear and comparison is unfair.
+
+
+Detailed Comments
+Thanks for submitting your paper to TCC. Below, I list the detailed issues that may help improve the paper if they are addressed.
+
+Section I
+1, Microservices can also be deployed in micro-VMs like AWS’s Firecracker, which are latency sensitive.
+2, To the reviewer’s knowledge, vCPU prioritization may not lead to more CPU time allocation. vCPU prioritization means the vCPU has higher priority. For example, a vCPU thread (a vCPU in the guest is actually a thread in the host) consumes less CPU time (e.g., responsible for I/O) will be prioritized by the Linux CFS; this does not mean this vCPU will obtain more CPU time.
+3, It’s unclear to me what the challenges of the proposed solution are. I think the paper can become better if the challenges and their corresponding solutions are described in the introduction.
+4, It’s unclear to me why the network scheduling approaches do not work. It’s better to explain “why this approach is effective only when…”.
+
+Section II
+1, To the reviewer’s knowledge, if a VM only has one vCPU, the vCPU will be busy executing guest OS services like interrupts, timers, etc. In this case, the experimental results may be greatly affected by noises. This may affect many observations and conclusions in this paper.
+2, I think the paper can become better if it uses the vCPU prioritization approach from a published work such as [32], which is publicly available.
+3, The Linux CFS has been replaced by the Earliest Eligible Virtual Deadline First (EEVDF) scheduler in mainline Linux. It’s better to try the latest Linux CPU scheduler.
+4, Higher vCPU priority may not lead to more CPU allocation time (see aforementioned comments).
+
+Section III and IV
+1, The design challenges and corresponding solutions are unclear.
+2, The design does not consider application latency such as average latency and tail latencies, which are very important metrics in clouds.
+3, It’s unclear to me why Linear Regression (LR), Support Vector Regression (SVR), and Random Forest Regression (RFR) are the most effective machine learning models. It’s better to elaborate why they are the most effective.
+4,  “The reason that RFR outperforms other models is that increasing Host CPU allocation…” —> it’s unclear to me the setup of the experiments so it’s hard to understand if the reason makes sense or not.
+5, It’s better to describe if the design considers multi-threaded applications running in multi-vCPU VMs, which are pervasive in clouds. It’s unclear if the observation from single-vCPU VM experiments can be extended to multi-vCPU VMs.
+6,  The design needs communication between guest (Model-G) and host (Model-H). It’s unclear to me how the guest and the host exchange information such as guest CPU utilization, bandwidth, and message size.
+7, It’s unclear to me how the design and implementation handle workload dynamics in clouds.
+
+
+Section V
+1, Some evaluation setup is unclear to me. For example, the SLO-configured VM has how many vCPUs and how much memory capacity; the workload is multi-threaded or single-threaded?
+2, It’s unclear to me why vCPU prioritization scheme always shows 100% core utilization. It’s better to compare with the available implementation from [32].
+3, To the reviewer’s knowledge, the comparison shown in Table III is unfair; the works shown in Table III are designed for other goals.
+4, The workload latency and tail latencies are not evaluated.
+5, The paper can become better if more real world applications are evaluated.
+
+
+Additional Questions:
+1. Which category describes this manuscript?: Research
+
+2. How relevant is this manuscript to the readers? Explain under Public Comments.: Relevant
+
+1. Please explain how this manuscript advances the field of research and/or contributes something new to the literature.: The paper proposes a machine learning framework, named TASADOR, to predict the CPU allocation for the network bandwidth in virtualized cloud environments. The paper presents that the existing solutions such as network scheduling and vCPU prioritization have drawbacks (e.g., CPU overprovisioning) and are not effective in the target scenarios. The proposed machine learning framework includes two key components: TASADOR collector and TASADOR manager, which are responsible for generating the training dataset and executing the entire workflow. The evaluation confirms the effectiveness of the proposed machine learning framework.
+
+2.  Is the manuscript technically sound? Please explain your answer under Public Comments below.: Partially
+
+1. Are the title, abstract, and keywords appropriate? Please explain under Public Comments below.: Yes
+
+2. Does the manuscript contain sufficient and appropriate references? Please explain under Public Comments below.: References are sufficient and appropriate
+
+If you are suggesting additional references they must be entered in the text box provided.  All suggestions must include full bibliographic information plus a DOI.
+
+
+If you are not suggesting any references, please type NA.: NA
+
+3. Does the introduction state the objectives of the manuscript in terms that encourage the reader to read on? Please explain under Public Comments below.: Could be improved
+
+4. How would you rate the organization of the manuscript? (Is it focused? Is the length appropriate for the topic?) Please explain under Public Comments below.: Could be improved
+
+5. Please rate the readability of the manuscript. Please explain under Public Comments below.: Readable - but requires some effort to understand
+
+6. Should the supplemental material be included? (Click on the Supplementary Files icon to view files): Does not apply, no supplementary files included
+
+7. If yes to 6, should it be accepted:
+
+Please rate the manuscript. Explain your choice: Poor
+
+
+Reviewer: 2
+
+Recommendation: Author Should Prepare A Minor Revision
+
+Comments:
+Thank you for submitting the manuscript!
+
+The manuscript addresses a critical and non-trivial challenge in virtualized cloud environments: accurately translating target network bandwidth requirements into precise CPU allocations. The difficulty stems from factors like workloads, message sizes, and hardware configurations.
+
+The method is simple and easy to follow, and the results look quite promising.
+
+The low overhead is a key strength: ~16 minutes for data collection and model training for new workloads, making it quickly adaptable. This is markedly faster than times required by other recent ML schemes (e.g., Sinan at 15 hours, Autothrottle at 12 hours).
+
+The framework is highly deployable as it requires no modifications inside VMs (existing applications or guest OSes).
+
+Here are some areas to improve:
+
+(1) The comparison against state-of-the-art ML resource management techniques (FIRM, Sinan, Autothrottle) is currently limited to a high-level comparison table focusing on input/output parameters and time overheads. Since the authors note difficulties in direct performance comparison due to differences in focus (VM-level vs. container/microservice, resource features), the discussion should be expanded to more deeply rationalize why TASADOR's simpler model (RFR) performs better for this specific problem instance (network bandwidth to CPU translation), even compared to the developed Multi-Layer Perceptron (MLP) model, which was 1.3× to 1.4× less accurate.
+
+(2) The discussion on handling diverse network traffic patterns notes that TASADOR selects worst-case parameters (e.g., smallest message size or most bursty pattern) which *often results in over-provisioning of CPU* under non-peak load conditions. While resource redistribution mitigates waste, it would strengthen the evaluation to explicitly quantify the degree of CPU over-provisioning (e.g., predicted CPU vs. actually needed CPU) during off-peak times in the dynamic load scenario to fully characterize the trade-off.
+
+(3) In the noisy neighbors evaluation, TASADOR achieves 0% SLO violation rate. The authors should briefly elaborate on how TASADOR's allocation mechanism successfully isolates the target VM from these high-contention resource aggressors to maintain 0% SLO violations, especially since the competing network scheduling scheme (tc) experienced a 20% SLO violation rate against CPU-bound neighbors.
+
+In addition, please consider adding contention in memory bandwidth dimension as well.
+
+(4) In terms of adaption to new workload, 16 minutes might still be an overhead for dynamic online workloads. Please consider how a learned model can generalize to changing workload or changing environment, like this paper FLASH.
+
+FLASH: Fast Model Adaptation in ML-Centric Cloud Platforms. Haoran Qiu, Weichao Mao, Archit Patke, Shengkun Cui, Chen Wang, Hubertus Franke, Zbigniew T. Kalbarczyk, Tamer Başar, Ravishankar K. Iyer. In Proceedings of the 7th Annual Conference on Machine Learning and Systems (MLSys 2024).
+
+(5) The authors should elaborate on how mispredictions are handled.Overprediction leads to overprovisioning, though it's conservative linux scheduler, still for cloud providers, it's hard to resell the CPU cores to other customers through oversubscription; underprediction is even worse.
+
+Additional Questions:
+1. Which category describes this manuscript?: Research
+
+2. How relevant is this manuscript to the readers? Explain under Public Comments.: Relevant
+
+1. Please explain how this manuscript advances the field of research and/or contributes something new to the literature.: This paper presents a machine learning framework specifically designed for accurate network bandwidth to CPU translations in virtualized cloud environments.
+
+It addresses the difficulty of translating target network bandwidth into precise CPU allocations, a non-trivial problem where existing network scheduling and vCPU prioritization methods often fail to meet requirements or result in significant CPU over-provisioning.
+
+The framework minimizes the overhead for new workloads, requiring only approximately 16 minutes for data collection and model training. This is markedly faster than other recent ML schemes used for resource management, making it easily adaptable to diverse environments and workloads.
+
+It utilizes a simplified ML approach (Random Forest Regression) combined with a concatenated CPU prediction method that models both Guest and Host CPU usage, which effectively captures the nonlinearity of the relationship and significantly improves prediction accuracy.
+
+2.  Is the manuscript technically sound? Please explain your answer under Public Comments below.: Yes
+
+1. Are the title, abstract, and keywords appropriate? Please explain under Public Comments below.: Yes
+
+2. Does the manuscript contain sufficient and appropriate references? Please explain under Public Comments below.: References are sufficient and appropriate
+
+If you are suggesting additional references they must be entered in the text box provided.  All suggestions must include full bibliographic information plus a DOI.
+
+
+If you are not suggesting any references, please type NA.: NA
+
+3. Does the introduction state the objectives of the manuscript in terms that encourage the reader to read on? Please explain under Public Comments below.: Yes
+
+4. How would you rate the organization of the manuscript? (Is it focused? Is the length appropriate for the topic?) Please explain under Public Comments below.: Satisfactory
+
+5. Please rate the readability of the manuscript. Please explain under Public Comments below.: Easy to read
+
+6. Should the supplemental material be included? (Click on the Supplementary Files icon to view files): Does not apply, no supplementary files included
+
+7. If yes to 6, should it be accepted:
+
+Please rate the manuscript. Explain your choice: Good
+
+
+Reviewer: 3
+
+Recommendation: Author Should Prepare A Minor Revision
+
+Comments:
+The paper is generally well written. There are a few minor issues listed below that require clarification or improvement.
+1. It is not clear how the proposed approach differs from existing methods discussed in the related work section. Please clearly explain what is new and what improvements are achieved compared to previous work.
+2. The system architecture is explained at a high level, which is useful. It is mentioned that “our model training is notably fast compared to other ML training schemes, which often require several hours to attain reasonable accuracy.” However, the training process appears simpler because the training data are collected from a VM with simulated workloads. It would be interesting to discuss whether such simply trained ML models can accurately predict workloads of real-world, complex use cases and enforce CPU allocation with finer granularity. Please clarify this point.
+3. Some assumptions and design choices are made in the system design, but the reasons for these choices are not always explained. For example, three supervised ML models (LR, SVR, and RFR) are used for regression. Providing simple justifications for selecting these models would strengthen the paper. This reviewer also notes that adaptive learning approaches, such as reinforcement learning, may offer better performance and could be discussed.
+4. It is not clear how the traffic used in the evaluation resembles real-world use cases or application traffic. For the evaluation of web server bandwidth requirement fulfillment, it is unclear how many clients are considered and what traffic models and characteristics (e.g., packet sizes, session arrival models, session durations, response time requirements) are assumed. Please clarify these aspects.
+
+
+Additional Questions:
+1. Which category describes this manuscript?: Practice / Application / Case Study / Experience Report
+
+2. How relevant is this manuscript to the readers? Explain under Public Comments.: Relevant
+
+1. Please explain how this manuscript advances the field of research and/or contributes something new to the literature.: This manuscript contributes to the research field by proposing a unified system architecture and control approach for computing and communication integrated networks. The paper also includes a description of implementation and validation, which helps demonstrate how the proposed ideas can work in practice. The work provides useful insights into system design, control functions, and performance behavior, making it valuable for both researchers and practitioners.
+
+2.  Is the manuscript technically sound? Please explain your answer under Public Comments below.: Appears to be - but didn't check completely
+
+1. Are the title, abstract, and keywords appropriate? Please explain under Public Comments below.: Yes
+
+2. Does the manuscript contain sufficient and appropriate references? Please explain under Public Comments below.: References are sufficient and appropriate
+
+If you are suggesting additional references they must be entered in the text box provided.  All suggestions must include full bibliographic information plus a DOI.
+
+
+If you are not suggesting any references, please type NA.: NA
+
+3. Does the introduction state the objectives of the manuscript in terms that encourage the reader to read on? Please explain under Public Comments below.: Could be improved
+
+4. How would you rate the organization of the manuscript? (Is it focused? Is the length appropriate for the topic?) Please explain under Public Comments below.: Could be improved
+
+5. Please rate the readability of the manuscript. Please explain under Public Comments below.: Readable - but requires some effort to understand
+
+6. Should the supplemental material be included? (Click on the Supplementary Files icon to view files): Does not apply, no supplementary files included
+
+7. If yes to 6, should it be accepted:
+
+Please rate the manuscript. Explain your choice: Good
