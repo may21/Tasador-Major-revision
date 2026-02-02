@@ -1,0 +1,132 @@
+\documentclass{article}
+\usepackage{todonotes}
+\usepackage{a4wide}
+\usepackage{xspace, comment}
+\input{envirs}
+\title{Response to the Reviewer's Comments}
+\begin{document}
+
+REFEREE REPORT 1\\
+
+We thank the reviewer for taking the time to review our manuscript. We have carefully considered the reviewer's meaningful comments and accordingly revised our manuscript. We hope that our revision improves the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in blue in the revised manuscript.
+
+
+\begin{verbatim}
+> R1C1
+> The authors presented their result in a single machine client/server architecture,
+> I am wondering how the proposed system works when the server side comprises of
+> more machines (two or more).
+\end{verbatim}
+
+In response to this comment, we have added an explanation on how \name works when there is a container communicating with multiple remote servers in Section 6 on Page 12 of the revised manuscript. As \name manages the performance requirement of containers per-interface (\ie, \tt{veth}) basis, it can offer the required network bandwidth to communicate with respective servers by assigning multiple interfaces to the container. For example, when a container communicates with three different servers, \name assigns three \tt{veth}s to the container and configure respective requirements to each \tt{veth}. This enables \name to satisfy multiple performance requirements assigned to a container depending on the number of remote servers.\\
+
+\begin{verbatim}
+> R1C2
+> The application type is only limited to Spark and Memcached.
+> I suggest that Spark is too slow for evaluation here.
+> Can authors extend the macro-benchmark evaluation to a high performance
+> low-latency data processing engine (eg Kafak, NSQ or NATS which are distributed
+> message broker systems)
+\end{verbatim}
+
+In response to this comment, we have additionally conducted experiments using Apache Kafka that the reviewer suggested and have presented the results in Section 4.2 of the revised manuscript. The evaluation results show that \name also satisfies the network performance requirement of Apache Kafka while improving the throughput by 24\% compared to \tt{tc}.\\
+
+
+REFEREE REPORT 2\\
+
+We would like to thank the reviewer for the careful and thorough reading of this manuscript. We have revised our present manuscript based on your meaningful comments and suggestions, and hope that our revision has improved the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in red in the revised manuscript.
+
+\begin{verbatim}
+
+> R2C1
+> First, the scheduler is designed for communication intensive tasks.
+> What is the impact of scheduler on the computing intensive tasks?
+> There may be a blend of computing and communication intensive tasks in a container.
+\end{verbatim}
+
+In response to this comment, we have added a description of the impact of \name on the tasks with different characteristics in Section 3.4 on Page 7. As \name only controls the CPU usage of tasks that process network packets, it does not have an impact on computing-intensive tasks. If a container executes computation and communication tasks simultaneously, \name can divide the container into different process groups depending on the process ids (\ie, \tt{pid}) of the tasks and only controls the communication tasks not to affect the performance of computation tasks. However, when the computing intensive task shares a CPU core with communication intensive tasks, the performance of the computing intensive tasks can degrade. This is because the major goal of \name is to satisfy network performance requirements by offering CPU allocation, which can result in increasing the CPU usage of a container with SLOs (\ie, performance requirements) while reducing that of other containers without SLOs on the same CPU core.
+\\
+
+\begin{verbatim}
+> R2C2
+> Second, the key of Autothrottle is to periodically adjust CPU quota of contrainers.
+> This idea is simple and may be effective for the communication intensive workloads.
+> Please clarify how to adjust the quota. What is the length of a period?
+> In real scenarios, the adjustment of the CPU quota may favor some workloads;
+> however, it may also degrade the performance of other types of workloads.
+\end{verbatim}
+
+We appreciate the comment and acknowledge that there is no explanation on the impact of the period on various workloads. We have added an explanation on the detailed mechanism of \name in Section 3.4 on Page 6 and 7 of the revised manuscript. \name adjusts the CPU quota every second by executing \tt{tg\_set\_cfs\_quota} in Linux kernel. In addition, as the reviewer pointed out, a fixed period can favor some workloads while hampering others. For example, when the period is too short for long-lasting workloads, the performance can fluctuate because of the frequent quota adjustment. On the other hand, the long period may not be effective for short-lived workloads. In order to change the period depending on the workload characteristics, \name allows the period to be altered in our implementation to apply different values depending on the optimal period.\\
+
+\begin{verbatim}
+> R2C3
+> Third, what is the impact on the time done in softirq of the designed scheduler?
+> Please add necessary experiments.
+\end{verbatim}
+
+In response to this comment, we have added evaluation results that show the softirq CPU usage on CPU cores depending on the message size and bandwidth configurations in Fig. 9 on Page 8 of the revised manuscript. Fig. 9 shows that \name reduces the softirq CPU usage by up to 37\% compared to \tt{tc}. This is because \name does not require packet inspection and queueing operation that \tt{tc} requires, which eliminates additional overhead for packet processing in satisfying network performance requirements.\\
+
+REFEREE REPORT 3\\
+
+We would like to thank the reviewer for the careful and thorough reading of this manuscript. We have revised our present manuscript based on your meaningful comments and suggestions and have completely rewritten Section 2 to describe the reason that the CPU usage control for containers is necessary over the network bandwidth allocation of \tt{tc}. We hope that our revision has improved the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in red in the revised manuscript.
+
+\begin{verbatim}
+> R3C1
+> 7% or even 18% sounds not a lot in terms of the network throughput performance
+> improvement. The authors need to show how this amount of improvement can improve
+> the overall system performance.
+\end{verbatim}
+
+We thank the reviewer for providing an important point. The major goal of this paper is to satisfy the performance requirements of containers rather than throughput improvement. In the revised manuscript, we demonstrate how the proposed technique (\ie, \name) can improve the overall system performance by modifying experiment scenarios in Section 2.2 on Page 3 of the revised manuscript. The experiment results show that \name can satisfy performance requirements ranging from 50 Mbps to 200 Mbps different from \tt{tc} that cannot meet the requirements higher than 100 Mbps. Also, we describe the additional advantages of \name in Section 1 on Page 2 of the revised manuscript. We find that \name is more efficient than \tt{tc} as \name does not perform packet header inspection and classification. This reduces the CPU usage in softirq processing which increases network throughput. This allows \name to improve the overall system performance by satisfying network performance requirements with reduced CPU overhead.
+\\
+
+\begin{verbatim}
+> R3C2
+> The motivation of this paper is lacking. The authors do not show that
+> CPU usage is the REASON that affects overall network throughput.
+> In Introduction, the authors show that a container environment can cause
+> higher CPU usage. But I don't see how this can be directly related to the claim of
+> "CPU usage can significantly impact network performance".
+> I believe the claim could be true but the logic is just not there.
+> In the Motivation, the authors show that 67.9% CPU usage increase corresponds to
+> only 4.9% throughput decreasement. The authors also claim high CPU usage may cause
+> high CPU time but not providing any data here.
+> All combined, I don't think the motivation is strong.
+> In addition, in 2.2, isn't the 63.5Mbps to 196.8Mbps increase caused
+> by the assignment change from 50Mbps to 200Mbps?
+> How does it have anything to do with CPU usage increasement?
+> The CPU usage increase is also the result from the assignment change, not the reason.
+\end{verbatim}
+
+We appreciate the comment and acknowledge that the motivation is insufficient to describe the reason that we adopt CPU allocation for network performance management. We have completely rewritten Section 2.2 to clarify the motivation of the paper in the revised manuscript. In Section 2.2 of the revised manuscript, we show that \tt{tc} fails to satisfy the performance requirements of a single container (\ie, an SLO-configured container) sharing a CPU core with another container (\ie, a non-SLO container) when the requirement is more than 100 Mbps. This is because the SLO-configured container utilizes no more than 40\% of CPU on average owing to the CPU core sharing with the non-SLO container. As the default CPU scheduler in Linux, a completely fair scheduler (CFS), does not have any information about the performance requirement of the SLO-configured container, it only tries to perform fair CPU allocation between the two containers. This prevents the SLO-configured container from utilizing CPU more than 50\% to achieve network bandwidth higher than 110 Mbps. Moreover, \tt{tc} that offers bandwidth allocation only does not intervene in CPU allocation, so it has difficulty in providing more CPU to the SLO-configured containers. \name overcomes the limitation of \tt{tc} by dynamically adjusting the CPU allocation towards the network performance requirements of containers. It increases or decreases the CPU allocation depending on the gap between the actual and required network bandwidth of containers, which enables containers to satisfy network performance requirements.
+\\
+
+\begin{verbatim}
+> R3C3
+> The design of the framework is straightforward, and in addition to the inconsistent
+> motivation of the paper and limited improvement from tc,
+> the novelty of this work looks a bit weak.
+\end{verbatim}
+
+In response to this comment, we have modified Abstract, Section 1, and Section 2.2 to describe the motivation and the novelty of the paper in the revised manuscript. As we describe in the response of R3C2, we have conducted additional experiments to show the motivation of this paper and the advantage of \name compared to \tt{tc}.
+\\
+
+\begin{verbatim}
+> R3C4
+> In Introduction, is it 16% of overall performance improvement or
+> just overall throughput improvement?
+> Both claims come up in the Introduction, confusing.
+\end{verbatim}
+
+In response to this comment, we have changed the term ``performance" in Section 1 to ``throughput" in the revised manuscript. This indicates that \name reduces the packet processing overhead of \tt{tc} by eliminating the packet header inspection and classification, which leads to the throughput improvement of micro- and macro-benchmarks.
+\\
+
+\begin{comment}
+\begin{thebibliography}{}
+
+\bibitem{1}
+Del Piccolo, V., Amamou, A., Haddadou, K., \& Pujolle, G. (2016). A survey of network isolation solutions for multi-tenant data centers. IEEE Communications Surveys \& Tutorials, 18(4), 2787-2821.
+
+\end{thebibliography}
+\end{comment}
+\end{document}
