@@ -15,7 +15,6 @@ Tasador-Major-revision/
 ├── response-letter/
 │   ├── response-letter.tex   # or .md
 │   └── response-letter.pdf   # optional
-├── reviews/
-│   └── reviews.txt           # pasted reviewer comments
+├── review.txt           # pasted reviewer comments
 └── scripts/
     └── build.sh              # optional LaTeX build helpers
