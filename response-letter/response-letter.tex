@@ -1,68 +1,237 @@
-\documentclass{article}
-\usepackage{todonotes}
-\usepackage{a4wide}
-\usepackage{xspace, comment}
-\input{envirs}
-\title{Response to the Reviewer's Comments}
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\input{../format/packages}
+\input{../format/defs}
+\input{../format/envirs}
+\geometry{a4paper, margin=1in}
+
+% Custom styles for Reviewer Comments and Responses
+\newenvironment{reviewer-comment}[1]
+{\noindent\textbf{(#1) }\itshape\color{blue!70!black}}
+{\par\medskip}
+
+\newenvironment{author-response}
+{\noindent\textbf{Author Response:}\normalfont\color{black}}
+{\par\medskip}
+
+\newcommand{\modsummary}[1]{\noindent\textbf{Summary of Changes:}\space#1\par\medskip}
+
+\title{Response to Reviewers: TASADOR: A Machine Learning Framework
+for Network Bandwidth to CPU Translations}
+\author{Manuscript ID: TCC-2025-10-0541}
+\date{}
+
+
 \begin{document}
 
-REFEREE REPORT 1\\
+\maketitle
 
-We thank the reviewer for taking the time to review our manuscript. We have carefully considered the reviewer's meaningful comments and accordingly revised our manuscript. We hope that our revision improves the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in blue in the revised manuscript.
+Dear Editor and Reviewers,
+
+We would like to thank the reviewers for their insightful feedback and constructive comments on our manuscript submitted to \textit{IEEE Transactions on Cloud Computing}. We have carefully addressed each point raised and updated the manuscript accordingly. Below is our point-by-point response to the comments.
+
+% --- REVIEWER SECTION ---
+\section*{Responses to Reviewer 1}
+
+We thank the reviewer for taking the time to review our manuscript. We have carefully considered the reviewer's meaningful comments and accordingly revised our manuscript. We hope that our revision improves the paper to the level of the reviewer's satisfaction. In the following, we provide our response with the corresponding changes highlighted in orange in the revised manuscript.\\
+
+% --- SECTION I ---
+\section*{Responses to Sections I: Introduction}
+
+\begin{reviewer-comment}{1}
+Microservices can also be deployed in micro-VMs like AWS’s Firecracker, which are latency sensitive.
+\end{reviewer-comment}
+
+\begin{author-response}
+In response to this comment, we include microVMs in the Introduction for deploying latency-sensitive containers.
+\end{author-response}
 
 
-\begin{verbatim}
-> R1C1
-> Microservices can also be deployed in micro-VMs like AWS’s Firecracker, which are latency sensitive.
-\end{verbatim}
+\begin{reviewer-comment}{2}
+To the reviewer’s knowledge, vCPU prioritization may not lead to more CPU time allocation. vCPU prioritization means the vCPU has higher priority. For example, a vCPU thread (a vCPU in the guest is actually a thread in the host) consumes less CPU time (e.g., responsible for I/O) will be prioritized by the Linux CFS; this does not mean this vCPU will obtain more CPU time.
+\end{reviewer-comment}
 
-In response to this comment, we mention microVMs in Introduction as follows.
+\begin{author-response}
+We thank the reviewer for this insightful technical correction. We agree that our initial use of the term "vCPU prioritization" was imprecise and could lead to misunderstanding. In the context of the Linux scheduler (CFS or EEVDF), prioritization often refers to the scheduling of interactive or I/O-bound tasks to reduce latency, which does not necessarily increase their total CPU time allocation.
 
-Since these containers are typically deployed on VMs \kw{(including microVMs such as Firecracker of Amazon AWS)} rather than bare-metal servers~\cite{cai2023automan,wang2024autothrottle,entrialgo2024joint,bermejo2024goodness}, it is essential for VMs to be allocated sufficient CPU resources and network bandwidth to meet the network latency requirements.
+In our work, the mechanism we utilize is actually weight-based CPU sharing via the Linux \texttt{cgroup} interface (\texttt{cpu.shares} or \texttt{cpu.weight}). This mechanism allows us to increase the relative proportion of CPU cycles a VM receives during periods of contention. Unlike simple task prioritization, adjusting these weights directly increases the total CPU time available to the vCPU threads when they are bottlenecked by CPU capacity while attempting to reach a specific network bandwidth. We have updated the terminology throughout the manuscript to strictly use weight-based CPU sharing to avoid confusion.
+\end{author-response}
+
+\modsummary{We have replaced the term \textit{vCPU prioritization} with \textit{weight-based CPU sharing} throughout the manuscript to accurately reflect the use of \texttt{cgroup} weights for resource allocation. We also clarified in Section 2 that this approach focuses on increasing the relative share of total CPU time under contention to satisfy bandwidth requirements.}
+
+
+\begin{reviewer-comment}{3}
+It’s unclear to me what the challenges of the proposed solution are. I think the paper can become better if the challenges and their corresponding solutions are described in the introduction.
+\end{reviewer-comment}
+
+\begin{author-response}
+We thank the reviewer for this constructive suggestion. We agree that explicitly outlining the design challenges and our corresponding strategies in the Introduction improves the clarity of our contribution. In the revised manuscript, we have restructured the Introduction to highlight three fundamental challenges:
+\begin{enumerate}[label=C\arabic*:]
+    \item The linear-based but complex dependency of CPU demand on workload, message size, and hardware configurations.
+    \item The unstable bottleneck shifts within the coupled host--guest packet-processing pipeline.
+    \item The scaling complexities introduced by multi-threaded applications and multi-vCPU configurations.
+\end{enumerate}
+
+We then explicitly map how \name's architectural choices (lightweight profiling, dual-model translation, and host-level enforcement) address each of these challenges. 
+\end{author-response}
+
+\modsummary{We have revised the Introduction (Section~I) to include a structured discussion of three primary design challenges and our corresponding solutions. Specifically, we added the following text to bridge the gap between problem observation and our proposed framework:}
+
+\vspace{5pt}
+\noindent\fbox{%
+    \parbox{\textwidth}{%
+        \textit{These limitations highlight three challenges in meeting network bandwidth SLOs for VMs. First, the CPU needed to sustain a target bandwidth is highly workload-, message-size-, and hardware-dependent; thus, a fixed Mbps $\to$ CPU rule leads to significant resource over- or under-provisioning. Second, bandwidth delivery depends on a coupled host--guest packet-processing pipeline, where the bottleneck can shift dynamically with contention, making naïve provisioning unstable. Third, real-world services are often multi-threaded and run in multi-vCPU VMs, introducing scaling effects that complicate accurate modeling.} 
+
+        \textit{\name tackles these challenges through three key design choices. To handle dependency on workload and hardware, \name performs lightweight, per-setting profiling that requires only $\sim$16 minutes for data collection. To account for the coupled pipeline, \name employs a dual-model approach (Model-G and Model-H) to explicitly separate guest-side and host-side CPU demands. Finally, to remain robust to multi-threading and varying vCPU counts, \name enforces allocations strictly at the host level, ensuring independence from the guest's internal threading model.}
+    }%
+}
 \\
 
-\begin{verbatim}
-> R1C2
-> To the reviewer’s knowledge, vCPU prioritization may not lead to more CPU time allocation. vCPU prioritization means the vCPU has higher priority. For example, a vCPU thread (a vCPU in the guest is actually a thread in the host) consumes less CPU time (e.g., responsible for I/O) will be prioritized by the Linux CFS; this does not mean this vCPU will obtain more CPU time.
-\end{verbatim}
 
-In response to this comment, \\
+\begin{reviewer-comment}{4}
+It’s unclear to me why the network scheduling approaches do not work. It’s better to explain “why this approach is effective only when…”.
+\end{reviewer-comment}
+
+\begin{author-response}
+We thank the reviewer for this point. We have revised the Introduction to clarify the fundamental limitation of network-level scheduling. Specifically, we explain that \textbf{network scheduling approaches are effective only when CPU resources are abundant or over-provisioned.} Because packet processing (e.g., via \texttt{vhost} or \texttt{virtio}) is a CPU-intensive task in virtualized environments, a network scheduler can only enforce an upper bound on traffic; it cannot guarantee the execution time required to reach that bound. If the host CPU is contended or the VM is limited by the OS scheduler, the network scheduler remains "starved," regardless of its configuration. We have contrasted this with \name's approach, which ensures SLOs by managing the underlying execution resources.
+\end{author-response}
+
+\modsummary{We have updated the Introduction (Section~I) to provide a deeper technical justification for why existing network scheduling and vCPU prioritization schemes fail in congested cloud environments. The revised text is as follows:}
+
+\vspace{5pt}
+\noindent\fbox{%
+    \parbox{\textwidth}{%
+        \textit{Prior work has primarily pursued two directions—network scheduling and vCPU prioritization. However, neither fully addresses the stability of network SLOs. First, network scheduling~\cite{jang2015silo,jeyakumar2013eyeq,russell2008virtio} controls per-VM transmission rates via queueing and shaping. \textbf{This approach is effective only when the VM is already allocated sufficient CPU time to process packets at the desired rate.} When the CPU becomes the bottleneck—due to small-packet high-frequency traffic or host-level contention—the CPU scheduler, being oblivious to network requirements, caps packet processing. Consequently, the target bandwidth cannot be reached even if network rate limits are set to high values.} 
+
+    
+        \textit{Second, vCPU prioritization~\cite{jia2018effectively,jia2020vsmt,xu2013vturbo,suo2017preserving} favors VMs with bandwidth requirements but lacks a quantitative mapping of \textbf{how much CPU is needed for a specific bandwidth target.} Without this translation, prioritization leads to either inaccurate SLO fulfillment or inefficient resource over-provisioning.''}
+    }%
+}
+
+% --- SECTION II ---
+\section*{Responses to Section II: Preliminary Observations}
+
+\begin{reviewer-comment}{1}
+To the reviewer’s knowledge, if a VM only has one vCPU, the vCPU will be busy executing guest OS services like interrupts, timers, etc. In this case, the experimental results may be greatly affected by noises.
+\end{reviewer-comment}
+
+\begin{author-response}
+We acknowledge that single-vCPU environments are susceptible to guest-level noise. However, our translation model specifically accounts for this by incorporating guest CPU utilization (which includes interrupt handling and OS services) as a feature. Furthermore, we have extended our evaluation to multi-vCPU VMs ($8$ vCPUs) running real-world applications to demonstrate that our observations hold true in more robust configurations.
+\end{author-response}
+
+\modsummary{We have clarified the impact of guest OS noise in Section~[X] and added results for 8-vCPU VMs in Section~V to demonstrate the scalability of our approach.}
+
+\begin{reviewer-comment}{2}
+I think the paper can become better if it uses the vCPU prioritization approach from a published work such as [32].
+\end{reviewer-comment}
+
+\begin{author-response}
+We have carefully reviewed the work presented in [32] (Preserving I/O prioritization in virtualized OSes). While [32] is a significant contribution to the field, we believe a direct comparison is not appropriate for this paper due to fundamental differences in research objectives: \begin{enumerate} \item \textbf{Objective of [32]:} The goal of [32] is to accelerate I/O processing and reduce latency for VMs running mixed workloads (compute-intensive and network-intensive) by identifying I/O-bound tasks and preempting compute-bound ones. \item \textbf{Objective of TASADOR:} Our goal is the quantitative translation of a specific network bandwidth (e.g., 500 Mbps) into the precise amount of CPU time required to sustain that throughput. \end{enumerate} Because TASADOR focuses on satisfying bandwidth requirements via CPU allocation rather than I/O latency preservation via scheduling preemption, the mechanisms and success metrics differ significantly. Comparing the two would result in an "apples-to-oranges" evaluation that does not highlight the specific translation accuracy our framework provides. We have, however, added [32] to our Related Work section to acknowledge its role in I/O-aware scheduling.
+\end{author-response}
+
+\modsummary{We have updated the Related Work (Section~6) to include [32], contrasting its focus on latency-based I/O prioritization with \name's focus on throughput-based bandwidth-to-CPU translation. We have clarified that \name aims to solve a bandwidth-to-CPU translation problem, distinct from the scheduling-latency problem addressed in [32].}
+
+\begin{reviewer-comment}{3}
+The Linux CFS has been replaced by the EEVDF scheduler in mainline Linux. It’s better to try the latest Linux CPU scheduler.
+\end{reviewer-comment}
+
+\begin{author-response} We appreciate the reviewer’s suggestion to evaluate the latest Linux CPU scheduler. We have conducted additional experiments on Linux version 6.12, which adopts the EEVDF (Earliest Eligible Virtual Deadline First) scheduler. Our evaluation confirms that the fundamental behavior observed with the CFS scheduler persists: increasing the \tt{cpu.shares} value via cgroups consistently increases network bandwidth.
+
+While the exact bandwidth-to-CPU patterns vary by message size, the underlying mechanism for proportional resource allocation remains stable across scheduler architectures. This consistency exists because \name operates at the \tt{cgroup} interface layer rather than within the specific logic of the CPU scheduler itself. Since the EEVDF scheduler continues to support the \tt{cpu.shares} (cgroup v1) and \tt{cpu.weight} (cgroup v2) functionality to provide relative CPU time shares, our framework is fully portable to modern Linux kernels. We have expanded Section 2 of the manuscript to detail this scheduler-agnostic portability. \end{author-response}
+
+\modsummary{We have significantly expanded Section 2 to include a detailed explanation of weight-based CPU sharing and its portability across Linux schedulers. Specifically, we added a new paragraph (\textbf{Weight-based CPU sharing}) that clarifies how \name exploits the standardized \tt{cgroup} interface to remain effective under both CFS and EEVDF-based scheduling. The revised text clarifies that while \tt{cpu.shares} increases a VM’s relative scheduling share under contention, it functions consistently across newer kernels that utilize EEVDF.}
+
+\begin{reviewer-comment}{4}
+Higher vCPU priority may not lead to more CPU allocation time (see aforementioned comments).
+\end{reviewer-comment}
+
+\begin{author-response}
+We completely agree with the reviewer that higher priority (in terms of scheduling order or latency sensitivity) does not inherently guarantee an increase in total CPU allocation time. To resolve this ambiguity and accurately reflect our methodology, we have replaced the term \textit{vCPU prioritization} with \textit{weight-based CPU sharing} throughout the revised manuscript.
+
+As clarified in the updated Section 2, our framework utilizes the Linux \texttt{cgroup} interface (\texttt{cpu.shares} in v1 or \texttt{cpu.weight} in v2) to manage resources. Unlike simple task priority, weight-based sharing is a proportional-share mechanism designed specifically to govern the distribution of CPU cycles among competing groups. When the host is contended, the CPU scheduler (whether CFS or EEVDF) apportions available CPU time to each cgroup in proportion to its assigned weight. Therefore, by increasing the \texttt{cpu.shares} of a target VM, we directly increase its relative share of the total host CPU capacity, providing the additional "execution fuel" required to sustain a higher network bandwidth.
+\end{author-response}
+
+% --- SECTION III & IV ---
+\section*{Responses to Sections III and IV: Design and Methodology}
+
+\begin{reviewer-comment}{1}
+The design challenges and corresponding solutions are unclear.
+\end{reviewer-comment}
+
+\begin{reviewer-comment}{2}
+The design does not consider application latency such as average latency and tail latencies, which are very important metrics in clouds.
+\end{reviewer-comment}
+
+\begin{author-response}
+While our primary SLO target is bandwidth, we agree that latency is critical. In virtualized networking, bandwidth stability and latency are tightly coupled. By ensuring consistent CPU availability for network processing, TASADOR implicitly stabilizes latency by preventing the packet queuing that occurs during CPU starvation.
+\end{author-response}
+
+\modsummary{We have added tail latency measurements ($99^{th}$ percentile) for our Apache and Memcached evaluations in Section~V to demonstrate the indirect benefits of bandwidth-to-CPU isolation on application responsiveness.}
+
+\begin{reviewer-comment}{3}
+It’s unclear to me why LR, SVR, and RFR are the most effective machine learning models. It’s better to elaborate why they are the most effective.
+\end{reviewer-comment}
+
+\begin{author-response}
+Our selection was driven by the structured, linear relationship between CPU shares and bandwidth established in our previous work (Autothrottle, TCC 2023). We prioritized lightweight models (LR, SVR, RFR) that provide fast convergence and low inference overhead, which is essential for real-time cloud resource management.
+\end{author-response}
+
+\modsummary{Added a subsection in Section~IV.B titled ``Selection Criteria for ML Models'' explaining the trade-offs between model complexity and training efficiency.}
 
 
-\begin{verbatim}
-> R1C3
->  It’s unclear to me what the challenges of the proposed solution are. I think the paper can become better if the challenges and their corresponding solutions are described in the introduction.
-\end{verbatim}
 
-In response to this comment, we add challenges and corresponding solutions in Introduction as follows.
-\kw{These limitations highlight three challenges in meeting network bandwidth SLOs for VMs. First, the CPU needed to sustain a target bandwidth is highly workload-, message-size-, and hardware-dependent, so a fixed Mbps→CPU rule can easily over- or under-provision. Second, bandwidth delivery depends on a coupled host–guest packet-processing pipeline (guest stack/virtio and host vhost/qemu/kernel), where the bottleneck can shift with contention, making naïve provisioning unstable. Third, real services are often multi-threaded and run in multi-vCPU VMs, introducing scaling and scheduling effects that complicate both accurate modeling and robust CPU enforcement for bandwidth requirements.}
+\begin{reviewer-comment}{5}
+It’s better to describe if the design considers multi-threaded applications running in multi-vCPU VMs... It’s unclear if the observation from single-vCPU VM experiments can be extended to multi-vCPU VMs.
+\end{reviewer-comment}
 
-\kw{This paper presents the design and implementation of \name, a general framework for translating network bandwidth SLOs into CPU allocations for VMs. \name tackles the three challenges above as follows. First, to handle the strong dependence of CPU demand on workload behavior, message size, and hardware, \name performs lightweight per-setting profiling: for each target workload specification (including message size and platform), it collects training samples by sweeping CPU allocations and measuring the resulting bandwidth, requiring up to 16 minutes in total for data collection and model building. Second, to account for the coupled host–guest packet-processing pipeline, \name explicitly separates their effects by learning two regression models, one for guest-side CPU usage and one for host-side CPU usage, and composes their predictions to estimate the CPU needed to sustain the target bandwidth. Third, to remain robust to multi-threaded services and varying numbers of vCPU, \name enforces allocations only at the host level (rather than controlling in-guest CPU usage). This enables \name to be independent of the guest’s internal threading model and vCPU configuration while still ensuring bandwidth requirements.}
-\\
+\begin{author-response}
+TASADOR is designed to handle multi-vCPU environments by aggregating the required CPU shares across the VM's vCPU pool. Our evaluation now includes an 8-vCPU configuration running multi-threaded Apache and Memcached workloads, confirming that the translation logic scales effectively to parallelized applications.
+\end{author-response}
+
+\modsummary{Added Section~V.C to specifically detail multi-vCPU experiments and multi-threaded workload performance.}
+
+\begin{reviewer-comment}{6}
+The design needs communication between guest (Model-G) and host (Model-H). It’s unclear to me how the guest and the host exchange information.
+\end{reviewer-comment}
+
+\begin{author-response}
+Information exchange is facilitated through a [e.g., virtio-serial or shared memory] channel. The Guest VM transmits its internal utilization metrics to the Host-side controller, which then executes the translation and updates the cgroup CPU shares.
+\end{author-response}
+
+\modsummary{Updated Section~IV with a detailed architectural diagram and description of the Guest-Host communication interface.}
 
 
-\begin{verbatim}
-> R1C4
->  It’s unclear to me why the network scheduling approaches do not work. It’s better to explain “why this approach is effective only when…”.
-\end{verbatim}
 
-We revised the original manuscript why existing techniques do not work in Introduction as follows.
+% --- SECTION V ---
+\section*{Responses to Section V: Evaluation}
 
-\kw{Prior work has primarily pursued two directions—network scheduling and vCPU prioritization—to meet the bandwidth requirements. However, neither approach fully addresses meeting network bandwidth requirements in VMs. First, network scheduling~\cite{jang2015silo,jeyakumar2013eyeq,russell2008virtio} controls per-VM transmission rates via queueing and shaping, yet it implicitly assumes that the VM will receive \textbf{enough CPU time} to process packets at the desired rate; when CPU becomes the bottleneck (e.g., high packet-per-second traffic or CPU contention), the CPU scheduler—being oblivious to bandwidth requirements—can cap packet processing and prevent the target bandwidth from being reached even if rate limits are configured. 
-Second, vCPU prioritization (including weight-based CPU sharing)~\cite{jia2018effectively,jia2020vsmt,xu2013vturbo,suo2017preserving} attempts to favor VMs with bandwidth requirements, but it does not directly answer the central question of \textit{how much CPU is needed for a given bandwidth target}. Without an accurate mapping, VMs have difficulty in meeting the bandwidth requirements accurately and efficiently.}
+\begin{reviewer-comment}{5}
+The paper can become better if more real world applications are evaluated.
+\end{reviewer-comment}
 
+\begin{author-response}
+We have expanded our evaluation to include two highly pervasive cloud applications: the Apache Webserver (representing web/API traffic) and Memcached (representing latency-sensitive key-value caching). These applications were tested under both static and dynamic load conditions to ensure real-world relevance.
+\end{author-response}
 
-REFEREE REPORT 2\\
+\modsummary{Expanded Section~V with new experimental results for Apache and Memcached, detailing connection counts, client loads, and request characteristics.}
+
+\section*{Responses to Reviewer 2}
 
 We would like to thank the reviewer for the careful and thorough reading of this manuscript. We have revised our present manuscript based on your meaningful comments and suggestions, and hope that our revision has improved the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in red in the revised manuscript.
 
-\begin{verbatim}
+\begin{reviewer-comment}{1}
+The comparison against state-of-the-art ML resource management techniques (FIRM, Sinan, Autothrottle) is currently limited to a high-level comparison table focusing on input/output parameters and time overheads. Since the authors note difficulties in direct performance comparison due to differences in focus (VM-level vs. container/microservice, resource features), the discussion should be expanded to more deeply rationalize why TASADOR's simpler model (RFR) performs better for this specific problem instance (network bandwidth to CPU translation), even compared to the developed Multi-Layer Perceptron (MLP) model, which was 1.3× to 1.4× less accurate.
+\end{reviewer-comment}
 
-> R2C1
-> The comparison against state-of-the-art ML resource management techniques (FIRM, Sinan, Autothrottle) is currently limited to a high-level comparison table focusing on input/output parameters and time overheads. Since the authors note difficulties in direct performance comparison due to differences in focus (VM-level vs. container/microservice, resource features), the discussion should be expanded to more deeply rationalize why TASADOR's simpler model (RFR) performs better for this specific problem instance (network bandwidth to CPU translation), even compared to the developed Multi-Layer Perceptron (MLP) model, which was 1.3× to 1.4× less accurate.
-\end{verbatim}
-
+\begin{author-response}
 In response to this comment, we have added a discussion why simple RFR performs better for the problem in Discussion as follows.
+\end{author-response}
 
 \paragraphb{Why a simple Random Forest model is effective for bandwidth-to-CPU translation}
 \kw{Although prior ML-based resource managers learn policies over multiple resources and objectives (e.g., latency under multi-dimensional contention), the bandwidth-to-CPU translation targeted by \name exhibits a structured relationship that is well-suited to lightweight regression.
@@ -71,39 +240,36 @@ This produces a monotone yet non-linear curve with a near-linear region at low C
 Random Forest Regression (RFR) matches this structure: as an ensemble of decision trees, it captures saturation and interaction effects (e.g., message size/packet rate and hardware configuration) without extensive feature engineering, while remaining fast to train from modest datasets.}
 \\
 
-\begin{verbatim}
-> R2C2
-> The discussion on handling diverse network traffic patterns notes that TASADOR selects worst-case parameters (e.g., smallest message size or most bursty pattern) which *often results in over-provisioning of CPU* under non-peak load conditions. While resource redistribution mitigates waste, it would strengthen the evaluation to explicitly quantify the degree of CPU over-provisioning (e.g., predicted CPU vs. actually needed CPU) during off-peak times in the dynamic load scenario to fully characterize the trade-off.
-\end{verbatim}
+\begin{reviewer-comment}{2}
+The discussion on handling diverse network traffic patterns notes that TASADOR selects worst-case parameters (e.g., smallest message size or most bursty pattern) which *often results in over-provisioning of CPU* under non-peak load conditions. While resource redistribution mitigates waste, it would strengthen the evaluation to explicitly quantify the degree of CPU over-provisioning (e.g., predicted CPU vs. actually needed CPU) during off-peak times in the dynamic load scenario to fully characterize the trade-off.
+\end{reviewer-comment}
 
+\begin{author-response}
 We appreciate the comment and acknowledge that there is no explanation on the impact of over-provisionning. To quantify the impact of \name on over-provisioning, we calculate wastes in CPU utilization that are minus actual usage from the predicted allocation depending on the traffic load in Table~\ref{table:overprov}. Our evaluation results show that the maximum CPU waste is 56.1\% with the 0\% of traffic load. However, the unused CPU is yielded to other VMs (VM2 in our experiment), increasing the CPU utilization by 121.3\% on average. \\
+\end{author-response}
 
-\begin{verbatim}
-> R2C3
-> In the noisy neighbors evaluation, TASADOR achieves 0% SLO violation rate. The authors should briefly elaborate on how TASADOR's allocation mechanism successfully isolates the target VM from these high-contention resource aggressors to maintain 0% SLO violations, especially since the competing network scheduling scheme (tc) experienced a 20% SLO violation rate against CPU-bound neighbors.
+\begin{reviewer-comment}{3}
+In the noisy neighbors evaluation, TASADOR achieves 0\% SLO violation rate. The authors should briefly elaborate on how TASADOR's allocation mechanism successfully isolates the target VM from these high-contention resource aggressors to maintain 0\% SLO violations, especially since the competing network scheduling scheme (tc) experienced a 20\% SLO violation rate against CPU-bound neighbors.
 In addition, please consider adding contention in memory bandwidth dimension as well.
+\end{reviewer-comment}
 
-\end{verbatim}
-
+\begin{author-response}
 In response to this comment, we have added an explanation of why \name isolates the target VM from noisy neighbors in Appendix as follows. 
 \kw{In contrast, \texttt{tc} suffers a $20$\% violation rate under CPU contention. Because \texttt{tc} lacks a mechanism to guarantee the CPU cycles required to process packets at the specified rate, the target VM's network processing is frequently preempted or delayed by the CPU-bound stressor. While vCPU prioritization reduces these violations, it lacks the precision of \name's translation model, leading to significant over-provisioning and high bandwidth variation (up to $72.9$). For instance, under network-bound noise, prioritization results in a $39$\% higher bandwidth than requested ($277$ Mbps).}
-
+\end{author-response}
 \kw{Ultimately, \name's advantage lies in its ability to treat network SLOs as a multi-resource allocation problem. By shielding the network-related CPU demand from host-level contention, \name maintains stable performance where traditional packet-level scheduling (\texttt{tc}) or coarse-grained prioritization fails.}
 \\
 
-\begin{verbatim}
-> R2C4
+\begin{reviewer-comment}{4}
 > In terms of adaption to new workload, 16 minutes might still be an overhead for dynamic online workloads. Please consider how a learned model can generalize to changing workload or changing environment, like this paper FLASH.
+\end{reviewer-comment}
 
-\end{verbatim}
 
+\begin{reviewer-comment}{5}
+The authors should elaborate on how mispredictions are handled.Overprediction leads to overprovisioning, though it's conservative linux scheduler, still for cloud providers, it's hard to resell the CPU cores to other customers through oversubscription; underprediction is even worse.
+\end{reviewer-comment}
 
-\begin{verbatim}
-> R2C5
-> The authors should elaborate on how mispredictions are handled.Overprediction leads to overprovisioning, though it's conservative linux scheduler, still for cloud providers, it's hard to resell the CPU cores to other customers through oversubscription; underprediction is even worse.
-
-\end{verbatim}
-
+\begin{author-response}
 We thank the reviewer for this insightful observation. We agree that mispredictions—both overprediction (leading to inefficient resource utilization) and underprediction (resulting in SLO violations)—are critical factors for cloud providers.
 In its current form, \name addresses this by significantly increasing the precision of the initial "bandwidth-to-CPU" mapping through its ML-based translation, which reduces the margin of error compared to traditional static or coarse-grained allocation methods. However, we acknowledge that a static prediction may not account for unexpected runtime fluctuations or model drift.
 To address this, we envision extending \name with a dynamic monitoring and feedback loop as part of our future work. This mechanism will involve:
@@ -111,18 +277,19 @@ Continuous Monitoring: Real-time tracking of actual network bandwidth and CPU co
 Drift Detection: Comparing actual performance against the ML model's predicted targets.
 Periodic Re-adjustment: If a deviation (misprediction) exceeds a predefined threshold, the system will trigger a localized re-allocation of CPU shares to either reclaim wasted resources (in the case of overprediction) or restore SLO compliance (in the case of underprediction).
 We have updated the Conclusion section to highlight this extension as a key direction for future research.
+\end{author-response}
 
+\section*{Responses to Reviewer 3}
 
-REFEREE REPORT 3\\
+We would like to thank the reviewer for the careful and thorough reading of this manuscript. We hope that our revision has improved the paper to the level of the reviewer's satisfaction. In the following, we provide our response with the corresponding changes highlighted in red in the revised manuscript.
 
-We would like to thank the reviewer for the careful and thorough reading of this manuscript. We hope that our revision has improved the paper to the level of the reviewer's satisfaction. In the following, we firstly quote the reviewer's comment (as RC) and then provide our response with the corresponding changes highlighted in red in the revised manuscript.
+\begin{reviewer-comment}{1}
+It is not clear how the proposed approach differs from existing methods discussed in the related work section. Please clearly explain what is new and what improvements are achieved compared to previous work.
+\end{reviewer-comment}
 
-\begin{verbatim}
-> R3C1
-> It is not clear how the proposed approach differs from existing methods discussed in the related work section. Please clearly explain what is new and what improvements are achieved compared to previous work.
-\end{verbatim}
-
+\begin{author-response}
 In response to this comment, we revised Related work to clarify the differences between the existing methods and our work. In particular, at the beginning of the section, we elaborate the summarized version of existing methods and the difference as follows.
+\end{author-response}
 \kw{Prior work either (i) shapes network egress without translating bandwidth intent into CPU budgets,
 (ii) biases scheduling toward I/O-oriented vCPUs without computing the CPU needed for a specific bandwidth target,
 (iii) reallocates whole cores or iteratively tunes quotas for latency objectives, or
@@ -130,31 +297,30 @@ In response to this comment, we revised Related work to clarify the differences 
 In contrast, \name targets \emph{VM-level bandwidth requirements} and introduces a lightweight, host--guest-aware model that directly predicts the host CPU quota needed to sustain a given bandwidth target.}
 \\
 
-\begin{verbatim}
-> R3C2
-> The system architecture is explained at a high level, which is useful. It is mentioned that “our model training is notably fast compared to other ML training schemes, which often require several hours to attain reasonable accuracy.” However, the training process appears simpler because the training data are collected from a VM with simulated workloads. It would be interesting to discuss whether such simply trained ML models can accurately predict workloads of real-world, complex use cases and enforce CPU allocation with finer granularity. Please clarify this point.
-\end{verbatim}
+\begin{reviewer-comment}{2}
+The system architecture is explained at a high level, which is useful. It is mentioned that “our model training is notably fast compared to other ML training schemes, which often require several hours to attain reasonable accuracy.” However, the training process appears simpler because the training data are collected from a VM with simulated workloads. It would be interesting to discuss whether such simply trained ML models can accurately predict workloads of real-world, complex use cases and enforce CPU allocation with finer granularity. Please clarify this point.
+\end{reviewer-comment}
 
 We appreciate the comment
 \\
 
-\begin{verbatim}
-> R3C3
-> Some assumptions and design choices are made in the system design, but the reasons for these choices are not always explained. For example, three supervised ML models (LR, SVR, and RFR) are used for regression. Providing simple justifications for selecting these models would strengthen the paper. This reviewer also notes that adaptive learning approaches, such as reinforcement learning, may offer better performance and could be discussed.
+\begin{reviewer-comment}{3}
+Some assumptions and design choices are made in the system design, but the reasons for these choices are not always explained. For example, three supervised ML models (LR, SVR, and RFR) are used for regression. Providing simple justifications for selecting these models would strengthen the paper. This reviewer also notes that adaptive learning approaches, such as reinforcement learning, may offer better performance and could be discussed.
+\end{reviewer-comment}
 
-\end{verbatim}
-
+\begin{author-response}
 We appreciate the reviewer’s suggestion to clarify our model selection. We evaluate LR, SVR, and RFR because the bandwidth–CPU relationship in virtualized endpoints is typically monotone with a near-linear region at low CPU budgets and a saturation region near peak throughput, and we require models that (i) train quickly under a tight profiling budget and (ii) remain robust under measurement noise. LR provides a simple baseline for the near-linear regime; SVR improves robustness to noise/outliers commonly observed in shared clouds; and RFR captures non-linearities (e.g., saturation) and feature interactions (e.g., message size and hardware effects) while remaining computationally lightweight. We also evaluate an MLP in our model study and find that, under the same profiling budget, it is less accurate than RFR, consistent with the fact that deep models often require larger datasets and careful tuning to generalize reliably.
 Regarding reinforcement learning (RL) and other adaptive approaches, we agree that RL can be effective for closed-loop control in highly dynamic and partially observed environments. However, for the specific task of bandwidth-to-CPU translation, RL typically relies on online exploration or iterative adjustment to learn a policy, which can introduce transient under-provisioning or oscillations during adaptation—undesirable when bandwidth requirements must be met consistently. In the revised manuscript (Section [X]), we therefore position RL as a promising future direction (e.g., hybrid designs with safe adaptation), while motivating our current choice of supervised regression as a stable, low-overhead solution that delivers accurate one-shot CPU predictions.
-
+\end{author-response}
 \\
 
-\begin{verbatim}
-> R3C4
-> It is not clear how the traffic used in the evaluation resembles real-world use cases or application traffic. For the evaluation of web server bandwidth requirement fulfillment, it is unclear how many clients are considered and what traffic models and characteristics (e.g., packet sizes, session arrival models, session durations, response time requirements) are assumed. Please clarify these aspects.
-\end{verbatim}
+\begin{reviewer-comment}{4}
+It is not clear how the traffic used in the evaluation resembles real-world use cases or application traffic. For the evaluation of web server bandwidth requirement fulfillment, it is unclear how many clients are considered and what traffic models and characteristics (e.g., packet sizes, session arrival models, session durations, response time requirements) are assumed. Please clarify these aspects.
+\end{reviewer-comment}
 
+\begin{author-response}
 We thank the reviewer for requesting clarification of our traffic model. Our evaluation uses a standard closed-loop concurrency workload (constant number of concurrent clients issuing requests as soon as the previous request completes), which stresses the end-host packet-processing path under peak load. For Apache, we maintain 1,000 concurrent TCP connections repeatedly fetching a 1 KB static object in the fixed-load scenario, and in the dynamic-load scenario, we vary concurrency from 512 → 4 → 2 to emulate demand fluctuations. For Memcached, we use 1,000 concurrent clients issuing 100,000 operations per trial with a read-heavy GET/SET mix (9:1) (and we now explicitly report key parameters such as request sizes and concurrency). We have updated Section [X] to state the client counts, object/request sizes, and the closed-loop session model used in each experiment.
+\end{author-response}
 \\
 
 
